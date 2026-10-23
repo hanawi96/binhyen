@@ -1,0 +1,76 @@
+
+:root {
+  /* Brand colors */
+  --color-primary: #607b68;
+  --color-primary-hover: #4d6655;
+
+  /* Background */
+  --color-background: #f8f6f0;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f0eee6;
+
+  /* Text */
+  --color-text: #303d35;
+  --color-text-secondary: #69766d;
+  --color-text-muted: #929b92;
+
+  /* Borders */
+  --color-border: #e3e5dc;
+
+  /* Feedback */
+  --color-success: #548469;
+  --color-error: #b96464;
+
+  /* Content themes */
+  --color-theme-peace: #e6eee6;
+  --color-theme-story: #f4e9df;
+  --color-theme-discovery: #e5eaf2;
+  --color-theme-psychology: #efe6ed;
+  --color-theme-cute: #f7e9e3;
+  --color-theme-nature: #e1ede5;
+
+  --color-accent-discovery: #526a91;
+  --color-accent-story: #8c6b57;
+  --color-accent-nature: #527b65;
+  --color-accent-psychology: #80647e;
+  --color-accent-cute: #9d695e;
+
+  /* Typography */
+  --font-body: "Segoe UI", Arial, sans-serif;
+  --font-editorial: Georgia, "Times New Roman", serif;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: clamp(2rem, 5vw, 3.5rem);
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.5rem;
+  --radius-xl: 2rem;
+  --radius-full: 9999px;
+
+  /* Layout */
+  --container-width: 1200px;
+  --reading-width: 680px;
+
+  /* Animation */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+}

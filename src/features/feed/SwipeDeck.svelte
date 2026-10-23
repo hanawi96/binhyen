@@ -1,0 +1,1355 @@
+
+<script lang="ts">
+  import { onMount } from "svelte";
+  import ContentCard from "./ContentCard.svelte";
+  import { demoContents } from "../content/demo-contents";
+  import type { ContentItem } from "../content/content.types";
+  import {
+    createApiFeedSource,
+    FeedLoadError,
+    isFeedAbort
+  } from "./api-feed-source";
+  import type {
+    TopicFilter,
+    MoodFilter
+  } from "../content/filter-contents";
+
+  let {
+    initialItems = [],
+    initialCursor = null,
+    initialMatched = true
+  }: {
+    initialItems?: ContentItem[];
+    initialCursor?: string | null;
+    initialMatched?: boolean;
+  } = $props();
+
+  let selectedTopic = $state<TopicFilter>("all");
+  let selectedMood = $state<MoodFilter>("all");
+
+  // STEP12_FEED_BUFFER
+  const PAGE_SIZE = 3;
+  const PREFETCH_REMAINING = 1;
+  const NEXT_PAGE_STATUS = "Đang chuẩn bị nội dung tiếp theo...";
+  const OTHER_ITEMS_NOTE =
+    "Chưa có nội dung cho lựa chọn này. Bạn đang xem những điều khác.";
+
+  let source = createApiFeedSource("all", "all");
+
+  const startingCursor =
+    initialItems.length > 0 ? initialCursor : "__first__";
+
+  let contents = $state<ContentItem[]>(initialItems);
+  let nextCursor: string | null = startingCursor;
+  let hasMore = $state(startingCursor !== null);
+  let loading = $state(false);
+  let loadError = $state("");
+  let directMatch = $state(initialMatched);
+  let loadSerial = 0;
+  let loadController: AbortController | null = null;
+  // Trang loc moi thay ca bo the, khong noi vao the cu.
+  let replaceOnLoad = $state(false);
+
+  // Bo ket qua cu neu bo loc thay doi khi dang tai.
+  let feedVersion = 0;
+
+  const ANIMATION_MS = 400;
+  const SWIPE_DISTANCE = 70;
+  const MIN_FAST_DISTANCE = 30;
+  const FAST_VELOCITY = 0.65;
+
+  let deckElement: HTMLDivElement;
+
+  let currentIndex = $state(0);
+  let dragging = $state(false);
+  let animating = $state(false);
+
+  // STEP11_SESSION_HISTORY
+  const seenIds = new Set<string>();
+  let seenCount = $state(0);
+  let pageVisible = $state(true);
+
+  // Luu trang thai theo ID, khong theo component.
+  let savedById = $state<Record<string, boolean>>({});
+
+  // Chi render toi da 3 the.
+  let visibleIndexes = $derived(
+    [currentIndex - 1, currentIndex, currentIndex + 1]
+      .filter((index) => index >= 0 && index < contents.length)
+  );
+
+  let canPrevious = $derived(currentIndex > 0);
+  let canNext = $derived(currentIndex < contents.length - 1);
+  let filtered = $derived(
+    selectedTopic !== "all" || selectedMood !== "all"
+  );
+  let atEnd = $derived(
+    contents.length > 0 &&
+      currentIndex >= contents.length - 1 &&
+      !hasMore &&
+      !loading &&
+      !loadError
+  );
+  let showingOtherItems = $derived(
+    filtered && !directMatch && contents.length > 0 && !loadError
+  );
+  let showWaiting = $state(false);
+
+  $effect(() => {
+    const pending =
+      contents.length === 0 && loading && !loadError;
+
+    if (!pending) {
+      showWaiting = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      showWaiting = true;
+    }, 180);
+
+    return () => window.clearTimeout(timer);
+  });
+
+  // Chi danh dau da xem khi the hien thi on dinh.
+  // Khong danh dau cac the duoc preload.
+  $effect(() => {
+    const active = contents[currentIndex];
+
+    if (
+      !active ||
+      dragging ||
+      animating ||
+      !pageVisible ||
+      seenIds.has(active.id)
+    ) {
+      return;
+    }
+
+    const id = active.id;
+
+    const timer = window.setTimeout(() => {
+      if (
+        document.hidden ||
+        dragging ||
+        animating ||
+        contents[currentIndex]?.id !== id ||
+        seenIds.has(id)
+      ) {
+        return;
+      }
+
+      seenIds.add(id);
+      seenCount = seenIds.size;
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  });
+
+  // Pointer state
+  let activePointerId: number | null = null;
+  let startY = 0;
+  let startTime = 0;
+  let lastDistance = 0;
+
+  // Animation state
+  let pendingIndex: number | null = null;
+  let dragFrame = 0;
+  let transitionFrame1 = 0;
+  let transitionFrame2 = 0;
+  let fallbackTimer = 0;
+  let queuedOffset = 0;
+
+  function placeSlide(node: HTMLElement) {
+    const previous = node.style.transition;
+    node.style.transition = "none";
+
+    const frame = requestAnimationFrame(() => {
+      node.style.transition = previous;
+    });
+
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }
+
+  function setOffset(value: number) {
+    if (!deckElement) return;
+
+    deckElement.style.setProperty(
+      "--drag-offset",
+      `${value}px`
+    );
+  }
+
+  function cancelDragFrame() {
+    if (dragFrame) {
+      cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+    }
+  }
+
+  function queueOffset(value: number) {
+    queuedOffset = value;
+
+    if (dragFrame) return;
+
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0;
+      setOffset(queuedOffset);
+    });
+  }
+
+  function clearTransitionTasks() {
+    if (transitionFrame1) {
+      cancelAnimationFrame(transitionFrame1);
+      transitionFrame1 = 0;
+    }
+
+    if (transitionFrame2) {
+      cancelAnimationFrame(transitionFrame2);
+      transitionFrame2 = 0;
+    }
+
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = 0;
+    }
+  }
+
+  function completeTransition() {
+    if (!animating) return;
+
+    clearTransitionTasks();
+
+    const nextIndex = pendingIndex;
+
+    // Reset offset va cap nhat index trong cung mot lan.
+    setOffset(0);
+
+    if (nextIndex !== null) {
+      currentIndex = nextIndex;
+    }
+
+    pendingIndex = null;
+    animating = false;
+
+    // Chi tai them sau khi chuyen the hoan tat.
+    if (
+      nextIndex !== null &&
+      hasMore &&
+      contents.length - currentIndex - 1 <= PREFETCH_REMAINING
+    ) {
+      void loadMore();
+    }
+  }
+
+  function startTransition(nextIndex: number | null, targetOffset: number) {
+    if (animating) return;
+
+    dragging = false;
+    animating = true;
+    pendingIndex = nextIndex;
+
+    // Ton trong cai dat giam chuyen dong.
+    if (
+      window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches
+    ) {
+      completeTransition();
+      return;
+    }
+
+    // Tach viec bo trang thai dragging va bat
+    // transition sang hai khung hinh.
+    transitionFrame1 = requestAnimationFrame(() => {
+      transitionFrame1 = 0;
+
+      transitionFrame2 = requestAnimationFrame(() => {
+        transitionFrame2 = 0;
+
+        setOffset(targetOffset);
+
+        // Du phong truong hop transitionend khong chay.
+        fallbackTimer = window.setTimeout(
+          completeTransition,
+          ANIMATION_MS + 150
+        );
+      });
+    });
+  }
+
+  function loadErrorMessage(error: unknown): string {
+    if (error instanceof FeedLoadError) {
+      if (error.reason === "timeout") {
+        return "Hết thời gian chờ. Hãy thử lại.";
+      }
+
+      if (error.reason === "network") {
+        return "Không có kết nối. Hãy thử lại.";
+      }
+    }
+
+    return "Không thể tải thêm nội dung.";
+  }
+
+  function cancelLoad() {
+    loadSerial += 1;
+    loadController?.abort();
+    loadController = null;
+  }
+
+  async function loadMore(expectedVersion = feedVersion) {
+    if (
+      expectedVersion !== feedVersion ||
+      loading ||
+      !hasMore ||
+      nextCursor === null
+    ) {
+      return;
+    }
+
+    const serial = ++loadSerial;
+    loadController?.abort();
+    const controller = new AbortController();
+    loadController = controller;
+
+    loading = true;
+    loadError = "";
+
+    const activeSource = source;
+    const activeCursor = nextCursor;
+
+    try {
+      const page = await activeSource.loadPage(
+        activeCursor,
+        PAGE_SIZE,
+        controller.signal
+      );
+
+      // Ket qua cua bo loc cu khong duoc chen vao feed moi.
+      if (serial !== loadSerial || expectedVersion !== feedVersion) {
+        return;
+      }
+
+      if (replaceOnLoad) {
+        contents = page.items;
+        currentIndex = 0;
+        replaceOnLoad = false;
+        setOffset(0);
+      } else {
+        const loadedIds = new Set(
+          contents.map((item) => item.id)
+        );
+
+        const newItems = page.items.filter(
+          (item) => !loadedIds.has(item.id)
+        );
+
+        contents = [...contents, ...newItems];
+      }
+
+      if (activeCursor === "__first__") {
+        directMatch = page.matched !== false;
+      }
+
+      nextCursor = page.nextCursor;
+      hasMore = nextCursor !== null;
+    } catch (error) {
+      if (
+        serial !== loadSerial ||
+        expectedVersion !== feedVersion ||
+        isFeedAbort(error)
+      ) {
+        return;
+      }
+
+      loadError = loadErrorMessage(error);
+    } finally {
+      if (serial === loadSerial && expectedVersion === feedVersion) {
+        loading = false;
+
+        if (loadController === controller) {
+          loadController = null;
+        }
+      }
+    }
+  }
+
+  function retryLoad() {
+    void loadMore();
+  }
+  function applyFilters(
+    topic: TopicFilter,
+    mood: MoodFilter
+  ) {
+    if (dragging || animating) return;
+
+    const newSource = createApiFeedSource(topic, mood);
+
+    const firstPage = newSource.firstPage(PAGE_SIZE);
+
+    // Huy request cu roi mo phien feed moi.
+    cancelLoad();
+    feedVersion += 1;
+
+    source = newSource;
+    selectedTopic = topic;
+    selectedMood = mood;
+
+    nextCursor = firstPage.nextCursor;
+    hasMore = nextCursor !== null;
+
+    loading = false;
+    loadError = "";
+    directMatch = true;
+    replaceOnLoad = true;
+
+    setOffset(0);
+    void loadMore();
+  }
+
+  function showAll() {
+    applyFilters("all", "all");
+  }
+
+  function handleTopicChange(event: Event) {
+    const topic = (
+      event.currentTarget as HTMLSelectElement
+    ).value as TopicFilter;
+
+    applyFilters(topic, selectedMood);
+  }
+
+  function handleMoodChange(event: Event) {
+    const mood = (
+      event.currentTarget as HTMLSelectElement
+    ).value as MoodFilter;
+
+    applyFilters(selectedTopic, mood);
+  }
+
+  // Xem lai tu dau, giu chu de va tam trang dang chon.
+  function restartSession() {
+    if (dragging || animating) return;
+
+    seenIds.clear();
+    seenCount = 0;
+
+    applyFilters(selectedTopic, selectedMood);
+  }
+  function navigate(direction: 1 | -1) {
+    if (dragging || animating || replaceOnLoad) return;
+
+    const nextIndex = currentIndex + direction;
+
+    if (nextIndex < 0 || nextIndex >= contents.length) {
+      return;
+    }
+
+    const height = deckElement.clientHeight;
+
+    startTransition(
+      nextIndex,
+      direction === 1 ? -height : height
+    );
+  }
+
+  function getDragOffset(distance: number) {
+    const height = Math.max(deckElement.clientHeight, 1);
+    const limit = height * 0.95;
+
+    let offset = Math.max(-limit, Math.min(limit, distance));
+
+    // Luc can o dau va cuoi danh sach.
+    if (
+      (offset > 0 && !canPrevious) ||
+      (offset < 0 && !canNext)
+    ) {
+      offset *= 0.25;
+    }
+
+    return offset;
+  }
+
+  function handlePointerDown(event: PointerEvent) {
+    if (
+      dragging ||
+      animating ||
+      replaceOnLoad ||
+      !event.isPrimary
+    ) {
+      return;
+    }
+
+    if (
+      event.pointerType === "mouse" &&
+      event.button !== 0
+    ) {
+      return;
+    }
+
+    const target = event.target;
+
+    // Khong keo the khi dang thao tac nut hoac dialog.
+    if (
+      target instanceof Element &&
+      target.closest(
+        "button, a, input, textarea, select, dialog"
+      )
+    ) {
+      return;
+    }
+
+    activePointerId = event.pointerId;
+    startY = event.clientY;
+    startTime = performance.now();
+    lastDistance = 0;
+
+    dragging = true;
+    setOffset(0);
+
+    deckElement.focus({ preventScroll: true });
+    deckElement.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (
+      !dragging ||
+      activePointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    lastDistance = event.clientY - startY;
+
+    // Chi cap nhat vi tri toi da mot lan moi frame.
+    queueOffset(getDragOffset(lastDistance));
+  }
+
+  function finishDrag(
+    event: PointerEvent,
+    cancelled = false
+  ) {
+    if (
+      !dragging ||
+      activePointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const distance = cancelled
+      ? lastDistance
+      : event.clientY - startY;
+
+    const elapsed = Math.max(
+      performance.now() - startTime,
+      1
+    );
+
+    const velocity = Math.abs(distance) / elapsed;
+
+    cancelDragFrame();
+    setOffset(getDragOffset(distance));
+
+    activePointerId = null;
+
+    if (deckElement.hasPointerCapture(event.pointerId)) {
+      deckElement.releasePointerCapture(event.pointerId);
+    }
+
+    if (cancelled || Math.abs(distance) < 5) {
+      startTransition(null, 0);
+      return;
+    }
+
+    const shouldNavigate =
+      Math.abs(distance) >= SWIPE_DISTANCE ||
+      (
+        Math.abs(distance) >= MIN_FAST_DISTANCE &&
+        velocity >= FAST_VELOCITY
+      );
+
+    if (!shouldNavigate) {
+      startTransition(null, 0);
+      return;
+    }
+
+    const direction: 1 | -1 =
+      distance < 0 ? 1 : -1;
+
+    const nextIndex = currentIndex + direction;
+
+    if (
+      nextIndex < 0 ||
+      nextIndex >= contents.length
+    ) {
+      startTransition(null, 0);
+      return;
+    }
+
+    const height = deckElement.clientHeight;
+
+    startTransition(
+      nextIndex,
+      direction === 1 ? -height : height
+    );
+  }
+
+  function handleLostCapture(event: PointerEvent) {
+    if (activePointerId === event.pointerId) {
+      finishDrag(event, true);
+    }
+  }
+
+  function handleTransitionEnd(
+    event: TransitionEvent,
+    index: number
+  ) {
+    if (!animating) return;
+
+    if (event.propertyName !== "transform") return;
+
+    if (event.target !== event.currentTarget) return;
+
+    // Chi lay su kien tu the dang hien thi.
+    if (index !== currentIndex) return;
+
+    completeTransition();
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.target !== deckElement) return;
+
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      navigate(1);
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      navigate(-1);
+    }
+  }
+
+  // STEP18_API_INTEGRATION
+  onMount(() => {
+    if (contents.length === 0) {
+      void loadMore();
+    }
+    pageVisible = !document.hidden;
+
+    function handleVisibilityChange() {
+      pageVisible = !document.hidden;
+      if (!document.hidden) return;
+
+      if (activePointerId !== null) {
+        const pointer = activePointerId;
+        activePointerId = null;
+        dragging = false;
+
+        if (deckElement.hasPointerCapture(pointer)) {
+          deckElement.releasePointerCapture(pointer);
+        }
+      }
+
+      cancelDragFrame();
+
+      if (animating) {
+        completeTransition();
+      } else {
+        setOffset(0);
+      }
+    }
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+      );
+
+      cancelDragFrame();
+      clearTransitionTasks();
+      cancelLoad();
+    };
+  });
+</script>
+
+<div class="swipe-deck">
+  <div class="filter-row">
+    <label class="filter-field">
+      <span>Chủ đề yêu thích</span>
+      <select
+        value={selectedTopic}
+        onchange={handleTopicChange}
+        disabled={dragging || animating}
+      >
+        <option value="all">Tất cả chủ đề</option>
+        <option value="peace">Bình yên</option>
+        <option value="stories">Câu chuyện</option>
+        <option value="science">Khoa học</option>
+        <option value="nature">Thiên nhiên</option>
+        <option value="psychology">Tâm lý học</option>
+        <option value="perspective">Góc nhìn</option>
+        <option value="cute">Dễ thương</option>
+        <option value="tips">Mẹo thú vị</option>
+      </select>
+    </label>
+
+    <label class="filter-field">
+      <span>Tâm trạng hiện tại</span>
+      <select
+        value={selectedMood}
+        onchange={handleMoodChange}
+        disabled={dragging || animating}
+      >
+        <option value="all">Mọi tâm trạng</option>
+        <option value="calm">Bình yên</option>
+        <option value="tired">Mệt mỏi</option>
+        <option value="stressed">Căng thẳng</option>
+        <option value="sad">Buồn</option>
+        <option value="happy">Vui vẻ</option>
+        <option value="curious">Tò mò</option>
+      </select>
+    </label>
+  </div>
+  <div
+    class="deck-viewport"
+    class:dragging={dragging}
+    bind:this={deckElement}
+    tabindex="0"
+    role="region"
+    aria-label="Các nội dung khám phá"
+    aria-roledescription="Bộ thẻ vuốt"
+    onpointerdown={handlePointerDown}
+    onpointermove={handlePointerMove}
+    onpointerup={(event) => finishDrag(event)}
+    onpointercancel={(event) => finishDrag(event, true)}
+    onlostpointercapture={handleLostCapture}
+    onkeydown={handleKeydown}
+  >
+    {#each visibleIndexes as index (contents[index].id)}
+      {@const content = contents[index]}
+
+      <div
+        class="slide"
+        use:placeSlide
+        class:inactive={index !== currentIndex}
+        aria-hidden={index !== currentIndex}
+        inert={index !== currentIndex}
+        style={`transform: translate3d(0, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
+        ontransitionend={(event) => handleTransitionEnd(event, index)}
+      >
+        <ContentCard
+          {content}
+          saved={Boolean(savedById[content.id])}
+          onSaveChange={(next) => {
+            savedById[content.id] = next;
+          }}
+        />
+      </div>
+    {/each}
+
+    {#if showWaiting}
+      <div class="empty-state" role="status">
+        <span class="empty-icon" aria-hidden="true">✳</span>
+        <h3>Một điều đẹp đẽ đang đến...</h3>
+        <p>Đang chuẩn bị nội dung dành cho bạn.</p>
+      </div>
+    {/if}
+
+    {#if contents.length === 0 && !loading && (loadError || !hasMore)}
+      <div class="empty-state" role="status">
+        <span class="empty-icon" aria-hidden="true">✳</span>
+
+        <h3>
+          {loadError
+            ? "Không tải được nội dung"
+            : filtered && !directMatch
+              ? "Chưa có nội dung cho lựa chọn này"
+              : "Chưa có nội dung"}
+        </h3>
+
+        <p>
+          {loadError
+            ? loadError
+            : filtered && !directMatch
+              ? "Hãy thử một chủ đề hoặc tâm trạng khác."
+              : "Những điều đẹp đẽ sẽ xuất hiện khi có bài mới."}
+        </p>
+
+        <button
+          type="button"
+          onclick={loadError
+            ? retryLoad
+            : filtered && !directMatch
+              ? showAll
+              : restartSession}
+        >
+          {loadError
+            ? "Thử tải lại"
+            : filtered && !directMatch
+              ? "Xem tất cả"
+              : "Thử lại"}
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  <div class="deck-controls">
+    <button
+      type="button"
+      class="nav-button"
+      onclick={() => navigate(-1)}
+      disabled={!canPrevious || animating || dragging || replaceOnLoad}
+      aria-label="Xem nội dung trước"
+    >
+      ↑
+    </button>
+
+    <span
+      class="page-count"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {String(contents.length ? currentIndex + 1 : 0).padStart(2, "0")}
+      <span class="separator">/</span>
+      {String(contents.length).padStart(2, "0")}
+    </span>
+
+    <button
+      type="button"
+      class="nav-button"
+      onclick={() => navigate(1)}
+      disabled={!canNext || animating || dragging || replaceOnLoad}
+      aria-label="Xem nội dung tiếp theo"
+    >
+      ↓
+    </button>
+  </div>
+
+  <p class="loading-slot" aria-live="polite">
+    {#if loading && !canNext}
+      <span>{NEXT_PAGE_STATUS}</span>
+    {/if}
+    <span class="loading-slot-sizer" aria-hidden="true">
+      {NEXT_PAGE_STATUS}
+    </span>
+  </p>
+
+  <p class="other-items-slot" aria-live="polite">
+    {#if showingOtherItems}
+      <span>{OTHER_ITEMS_NOTE}</span>
+    {/if}
+    <span class="other-items-sizer" aria-hidden="true">
+      {OTHER_ITEMS_NOTE}
+    </span>
+  </p>
+
+  {#if atEnd}
+    <div class="feed-note" role="status">
+      <span>Bạn đã xem hết những điều đang có.</span>
+      <button type="button" onclick={restartSession}>
+        Xem lại từ đầu
+      </button>
+    </div>
+  {/if}
+
+  {#if loadError && contents.length > 0}
+    <div class="feed-load-error" role="alert">
+      <span>{loadError}</span>
+      <button type="button" onclick={retryLoad}>
+        Thử lại
+      </button>
+    </div>
+  {/if}
+
+  {#if import.meta.env.DEV}
+    <p class="session-status">
+      Đã xem trong phiên: {seenCount}
+      · Đã tải: {contents.length} thẻ
+      · {hasMore ? "Còn dữ liệu" : "Đã tải hết dữ liệu"}
+    </p>
+  {/if}
+
+  {#if canNext}
+    <p class="swipe-hint">Vuốt lên để khám phá điều tiếp theo</p>
+  {:else if canPrevious}
+    <p class="swipe-hint">Vuốt xuống để xem lại thẻ trước</p>
+  {:else if atEnd}
+    <p class="swipe-hint">Không còn nội dung tiếp theo</p>
+  {/if}
+</div>
+
+<style>
+  .swipe-deck {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .deck-viewport {
+    position: relative;
+    width: 100%;
+    height: clamp(440px, 66dvh, 620px);
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
+    overscroll-behavior: contain;
+    outline-offset: 4px;
+  }
+
+  .deck-viewport.dragging {
+    cursor: grabbing;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    transition: transform var(--duration-slow) var(--ease-standard);
+  }
+
+  /* Trong luc keo, di chuyen truc tiep theo ngon tay. */
+  .deck-viewport.dragging .slide {
+    transition: none;
+  }
+
+  .slide.inactive {
+    pointer-events: none;
+  }
+
+  .slide :global(.content-card) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .deck-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-5);
+    margin-top: var(--space-4);
+  }
+
+  .nav-button {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-primary);
+    font-size: var(--text-xl);
+    transition:
+      background var(--duration-fast),
+      color var(--duration-fast);
+  }
+
+  .nav-button:hover:not(:disabled) {
+    background: var(--color-primary);
+    color: var(--color-surface);
+  }
+
+  .nav-button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .page-count {
+    min-width: 65px;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .separator {
+    margin-inline: var(--space-2);
+    color: var(--color-text-muted);
+  }
+
+  .swipe-hint {
+    margin-top: var(--space-3);
+    color: var(--color-text-muted);
+    font-family: var(--font-editorial);
+    font-size: var(--text-sm);
+    font-style: italic;
+    text-align: center;
+  }
+
+  @media (max-width: 600px) {
+    .deck-viewport {
+      height: clamp(390px, 68dvh, 620px);
+    }
+
+    .nav-button {
+      width: 38px;
+      height: 38px;
+    }
+
+    .swipe-hint {
+      font-size: var(--text-xs);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .slide {
+      transition-duration: 0.01ms;
+    }
+  }
+  /* STEP7_RESPONSIVE_DECK */
+
+  @media (max-width: 850px) {
+    .swipe-deck {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .deck-viewport {
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 0;
+    }
+
+    .deck-controls {
+      flex: 0 0 auto;
+      margin-top: 8px;
+    }
+
+    .swipe-hint {
+      display: none;
+    }
+  }
+
+  @media (max-width: 850px) and (max-height: 540px) {
+    .swipe-deck {
+      flex: none;
+    }
+
+    .deck-viewport {
+      flex: none;
+      height: 360px;
+    }
+  }
+  /* STEP 9: CONTENT FILTERS */
+
+  .filter-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    flex-shrink: 0;
+    margin-bottom: var(--space-3);
+  }
+
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .filter-field span {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .filter-field select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .filter-field select:hover {
+    border-color: var(--color-primary);
+  }
+
+  .filter-field select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+
+  .empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    padding: var(--space-6);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface-soft);
+    text-align: center;
+  }
+
+  .empty-icon {
+    color: var(--color-primary);
+    font-size: 2.5rem;
+  }
+
+  .empty-state h3 {
+    font-family: var(--font-editorial);
+    font-size: var(--text-xl);
+    font-weight: 400;
+  }
+
+  .empty-state p {
+    max-width: 280px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.7;
+  }
+
+  .empty-state button {
+    min-height: 44px;
+    padding: var(--space-3) var(--space-5);
+    border: none;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font-size: var(--text-sm);
+  }
+
+  @media (max-width: 600px) {
+    .filter-row {
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .filter-field select {
+      font-size: var(--text-xs);
+    }
+  }
+  /* STEP9_FILTER_VISIBILITY_FIX */
+
+  .swipe-deck > .filter-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    margin-bottom: 12px;
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .filter-field span {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .filter-field select {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    min-width: 0;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  @media (max-width: 600px) {
+    .swipe-deck > .filter-row {
+      gap: var(--space-2);
+    }
+
+    .filter-field select {
+      font-size: var(--text-xs);
+    }
+  }
+
+  /* FILTER_UI_STYLE_FIX */
+
+  .filter-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    flex: 0 0 auto;
+    width: 100%;
+    margin-bottom: var(--space-3);
+    position: relative;
+    z-index: 2;
+  }
+
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .filter-field span {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .filter-field select {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .filter-field select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  @media (max-width: 600px) {
+    .filter-row {
+      gap: var(--space-2);
+    }
+
+    .filter-field span {
+      font-size: 0.7rem;
+    }
+
+    .filter-field select {
+      font-size: var(--text-xs);
+      padding-inline: 8px;
+    }
+  }
+  .loading-slot {
+    display: grid;
+    flex: 0 0 auto;
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    text-align: center;
+  }
+
+  .loading-slot span {
+    grid-area: 1 / 1;
+  }
+
+  .loading-slot-sizer {
+    visibility: hidden;
+  }
+
+  .other-items-slot {
+    display: grid;
+    flex: 0 0 auto;
+    margin-top: var(--space-3);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .other-items-slot span {
+    grid-area: 1 / 1;
+  }
+
+  .other-items-sizer {
+    visibility: hidden;
+  }
+
+  .session-status {
+    flex: 0 0 auto;
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    text-align: center;
+  }
+  .feed-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .feed-note button {
+    min-height: 36px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  .feed-load-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+    color: var(--color-error);
+    font-size: var(--text-xs);
+  }
+
+  .feed-load-error button {
+    min-height: 36px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+</style>

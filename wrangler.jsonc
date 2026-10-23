@@ -1,0 +1,23 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"compatibility_date": "2026-10-12",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"name": "binhyen",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "binhyen-db",
+			"database_id": "438b05f8-ce0c-4ab8-885e-74b365e22719"
+		}
+	]
+}

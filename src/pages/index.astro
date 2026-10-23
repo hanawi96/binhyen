@@ -1,16 +1,46 @@
+
 ---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import type { ContentItem } from "../features/content/content.types";
+import { loadPublicFeed } from "../features/feed/load-public-feed";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import ExploreFeed from "../features/feed/ExploreFeed.svelte";
+
+const FIRST_PAGE_SIZE = 3;
+
+let initialItems: ContentItem[] = [];
+let initialCursor: string | null = null;
+let initialMatched = true;
+
+try {
+  const page = await loadPublicFeed(env.DB, {
+    topic: "all",
+    mood: "all",
+    cursor: null,
+    limit: FIRST_PAGE_SIZE
+  });
+
+  initialItems = page.items;
+  initialCursor = page.nextCursor;
+  initialMatched = page.matched;
+} catch (error) {
+  console.error("Homepage feed error:", error);
+}
+
+Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<BaseLayout
+  title="Bình Yên - Một khoảng lặng dành cho bạn"
+  description="Khám phá những câu chuyện, góc nhìn và điều đẹp đẽ nhỏ bé trong cuộc sống."
+>
+  <ExploreFeed
+    client:load
+    initialItems={initialItems}
+    initialCursor={initialCursor}
+    initialMatched={initialMatched}
+  />
+</BaseLayout>
