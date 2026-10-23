@@ -1217,17 +1217,29 @@
 
   {#if reading && contents[currentIndex]}
     {@const item = contents[currentIndex]}
-    <button
-      type="button"
-      class="close-read"
-      class:shown={readerShown}
-      onclick={closeReading}
-      aria-label="Khép lại"
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
-      </svg>
-    </button>
+    <div class="read-actions" class:shown={readerShown}>
+      <button
+        type="button"
+        class="read-icon"
+        onclick={closeReading}
+        aria-label="Khép lại"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="read-icon"
+        onclick={readNext}
+        disabled={!canNext}
+        aria-label="Bài kế"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3.5 8h9M8.8 4.3 12.5 8l-3.7 3.7" />
+        </svg>
+      </button>
+    </div>
     <article
       class="reader"
       class:shown={readerShown}
@@ -1274,14 +1286,6 @@
             {/if}
           {/each}
           <p class="reader-end">Hết bài.</p>
-          <button
-            type="button"
-            class="next-read"
-            onclick={readNext}
-            disabled={!canNext}
-          >
-            Bài kế
-          </button>
         {/if}
       </div>
       </div>
@@ -2245,11 +2249,27 @@
     transform: translateY(0);
   }
 
-  .close-read {
+  .read-actions {
     position: absolute;
     right: 22px;
     bottom: max(22px, calc(env(safe-area-inset-bottom) + 12px));
     z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 200ms ease,
+      transform 200ms ease !important;
+  }
+
+  .read-actions.shown {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .read-icon {
     display: grid;
     place-items: center;
     width: 36px;
@@ -2259,25 +2279,20 @@
     border-radius: 50%;
     background: transparent;
     color: var(--color-text);
-    opacity: 0;
-    transform: translateY(16px);
-    transition:
-      opacity 200ms ease,
-      transform 200ms ease !important;
   }
 
-  .close-read.shown {
-    opacity: 1;
-    transform: translateY(0);
+  .read-icon:disabled {
+    opacity: 0.35;
   }
 
-  .close-read svg {
+  .read-icon svg {
     width: 14px;
     height: 14px;
     stroke: currentColor;
     stroke-width: 1.5;
     fill: none;
     stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .reader-scroll {
@@ -2295,19 +2310,6 @@
 
   .reader-scroll .reader-column {
     padding-bottom: 64px;
-  }
-
-  .next-read {
-    padding: 8px 0;
-    border: 0;
-    background: transparent;
-    color: var(--color-primary);
-    font-size: 1.15rem;
-    font-weight: 650;
-  }
-
-  .next-read:disabled {
-    opacity: 0.4;
   }
 
   .reader .reader-kicker {
@@ -2390,7 +2392,7 @@
       top: 58px;
     }
 
-    .close-read {
+    .read-actions {
       right: 14px;
       bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
     }
