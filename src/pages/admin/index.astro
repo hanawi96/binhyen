@@ -1,0 +1,16 @@
+---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import { hasAdminSession } from "../../features/admin/admin-auth";
+
+const destination = hasAdminSession(
+  Astro.request.headers.get("cookie"),
+  env.ADMIN_TOKEN
+)
+  ? "/admin/contents"
+  : "/admin/login";
+
+return Astro.redirect(destination);
+---

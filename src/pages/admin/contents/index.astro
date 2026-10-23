@@ -1,0 +1,49 @@
+---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import { hasAdminSession } from "../../../features/admin/admin-auth";
+import {
+  listAdminContents,
+  loadAdminCatalog
+} from "../../../features/admin/d1-admin-content";
+import AdminStudio from "../../../features/admin/AdminStudio.svelte";
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+
+if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+  return Astro.redirect("/admin/login");
+}
+
+const [page, catalog] = await Promise.all([
+  listAdminContents(env.DB, {
+    status: "all",
+    q: "",
+    kind: "",
+    topic: "",
+    sort: "updated",
+    review: false,
+    cursor: null,
+    limit: 12
+  }),
+  loadAdminCatalog(env.DB)
+]);
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex");
+---
+
+<BaseLayout
+  title="Quản lý nội dung · Bình Yên"
+  description="Soạn và xuất bản nội dung trên máy này."
+>
+  <AdminStudio
+    client:load
+    initialItems={page.items}
+    initialCursor={page.nextCursor}
+    initialTotal={page.total}
+    initialStats={page.stats}
+    initialTopics={catalog.topics}
+    initialMoods={catalog.moods}
+  />
+</BaseLayout>

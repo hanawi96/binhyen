@@ -11,6 +11,8 @@
     "preview": "astro preview",
     "astro": "astro",
     "test": "vitest run",
+    "backup:local": "node scripts/backup-local-d1.mjs",
+    "seed:demo": "node scripts/seed-demo-catalog.mjs",
     "generate-types": "wrangler types"
   },
   "dependencies": {

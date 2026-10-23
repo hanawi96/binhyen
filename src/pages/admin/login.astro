@@ -1,0 +1,23 @@
+---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import { hasAdminSession } from "../../features/admin/admin-auth";
+import AdminLogin from "../../features/admin/AdminLogin.svelte";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+
+if (hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+  return Astro.redirect("/admin/contents");
+}
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex");
+---
+
+<BaseLayout
+  title="Đăng nhập quản trị · Bình Yên"
+  description="Đăng nhập phòng quản trị trên máy này."
+>
+  <AdminLogin client:load />
+</BaseLayout>

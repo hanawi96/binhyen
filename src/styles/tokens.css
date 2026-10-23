@@ -1,5 +1,7 @@
 
 :root {
+  color-scheme: light;
+
   /* Brand colors */
   --color-primary: #607b68;
   --color-primary-hover: #4d6655;
@@ -29,15 +31,50 @@
   --color-theme-cute: #f7e9e3;
   --color-theme-nature: #e1ede5;
 
+  --color-accent-peace: #607b68;
   --color-accent-discovery: #526a91;
   --color-accent-story: #8c6b57;
   --color-accent-nature: #527b65;
   --color-accent-psychology: #80647e;
   --color-accent-cute: #9d695e;
 
+  --color-brand-mark: #8da18f;
+  --color-quiet: #667668;
+  --color-line: #dde3d9;
+  --color-glass: rgba(255, 255, 255, 0.72);
+  --color-glass-soft: rgba(255, 255, 255, 0.65);
+  --color-chip: #607061;
+  --color-chip-active-bg: #e4ece2;
+  --color-chip-active-line: #bfcfbe;
+  --color-chip-active: #365744;
+  --color-saved-bg: #e2ece1;
+  --color-saved-line: #c7d7c8;
+  --color-saved: #2d5c3d;
+  --color-hint: #899888;
+  --color-counter: #92a092;
+  --color-counter-strong: #486651;
+  --color-progress: #8ca58e;
+  --color-toast: #345843;
+  --color-toast-text: #ffffff;
+  --color-toast-shadow: rgba(49, 71, 58, 0.16);
+  --color-sheet: #fffcf5;
+  --color-sheet-line: #e2e6dc;
+  --color-sheet-shadow: rgba(49, 71, 58, 0.12);
+  --color-sheet-close: #6c7f6d;
+  --color-sheet-close-line: #d8e0d5;
+  --color-sheet-label: #89a089;
+  --color-sheet-body: #657567;
+  --color-eyebrow: #8a9b8b;
+  --color-ornament: #9db19d;
+  --scene-glow-sage: #e3ece1;
+  --scene-glow-warm: #f1e4d4;
+  --scene-top: #f9f8f3;
+  --wash-day: #f6f0dc;
+  --ink-day: #8a7044;
+
   /* Typography */
   --font-body: "Segoe UI", Arial, sans-serif;
-  --font-editorial: Georgia, "Times New Roman", serif;
+  --font-editorial: Cambria, "Times New Roman", "Noto Serif", serif;
 
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
@@ -73,4 +110,64 @@
   --duration-normal: 250ms;
   --duration-slow: 400ms;
   --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-primary: #8eaa96;
+  --color-primary-hover: #a3c0ab;
+  --color-background: #1b2320;
+  --color-surface: #24302b;
+  --color-surface-soft: #2c3631;
+  --color-text: #e8f0ea;
+  --color-text-secondary: #c5d0c8;
+  --color-text-muted: #93a399;
+  --color-border: #3d4a43;
+  --color-success: #8fbfa4;
+  --color-error: #e3a3a3;
+  --color-theme-peace: #2e4036;
+  --color-theme-story: #3a3028;
+  --color-theme-discovery: #2a3342;
+  --color-theme-psychology: #3a2e38;
+  --color-theme-cute: #3d302b;
+  --color-theme-nature: #2a3d32;
+  --color-accent-peace: #d5e6d8;
+  --color-accent-discovery: #d4def0;
+  --color-accent-story: #f0d7c8;
+  --color-accent-nature: #d3eadc;
+  --color-accent-psychology: #f0d7ea;
+  --color-accent-cute: #f3d5cb;
+  --color-brand-mark: #a3b8a6;
+  --color-quiet: #b7c3bb;
+  --color-line: #3d4a43;
+  --color-glass: rgba(36, 48, 43, 0.86);
+  --color-glass-soft: rgba(36, 48, 43, 0.72);
+  --color-chip: #b7c3bb;
+  --color-chip-active-bg: #2c3b32;
+  --color-chip-active-line: #4d6456;
+  --color-chip-active: #d5e6d8;
+  --color-saved-bg: #2c3b32;
+  --color-saved-line: #4d6456;
+  --color-saved: #d5e6d8;
+  --color-hint: #93a399;
+  --color-counter: #93a399;
+  --color-counter-strong: #d5e6d8;
+  --color-progress: #8eaa96;
+  --color-toast: #31483c;
+  --color-toast-text: #e8f0ea;
+  --color-toast-shadow: rgba(0, 0, 0, 0.28);
+  --color-sheet: #24302b;
+  --color-sheet-line: #3d4a43;
+  --color-sheet-shadow: rgba(0, 0, 0, 0.28);
+  --color-sheet-close: #c5d0c8;
+  --color-sheet-close-line: #3d4a43;
+  --color-sheet-label: #a3b5a4;
+  --color-sheet-body: #c5d0c8;
+  --color-eyebrow: #a3b5a4;
+  --color-ornament: #8eaa96;
+  --scene-glow-sage: #24312b;
+  --scene-glow-warm: #2c261f;
+  --scene-top: #1e2622;
+  --wash-day: #3a3424;
+  --ink-day: #f0e2c0;
 }

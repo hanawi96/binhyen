@@ -19,6 +19,17 @@ const {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f6f0" />
+    <script is:inline>
+      try {
+        if (localStorage.getItem("binhyen-theme") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          var themeMeta = document.querySelector('meta[name="theme-color"]');
+          if (themeMeta) themeMeta.setAttribute("content", "#1b2320");
+        }
+      } catch (e) {
+        // Không đọc được bộ nhớ thì giữ giao diện sáng.
+      }
+    </script>
     <meta name="description" content={description} />
     <title>{title}</title>
   </head>
