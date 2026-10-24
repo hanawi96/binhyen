@@ -3,10 +3,12 @@ import {
   type ContentItem,
   type ContentKind,
   type ContentMood,
+  type ContentPollOption,
   type ContentStatus,
   type ContentTheme,
   type ContentTopic
 } from "../content/content.types";
+import { readContentImage, readContentVideo } from "../content/content-media";
 
 /** Cot cua mot the trong feed; bang contents phai co ten bi danh c. */
 export const CARD_COLUMNS = `
@@ -55,7 +57,30 @@ export const CARD_COLUMNS = `
   COALESCE(
     (SELECT s.share_count FROM content_stats s WHERE s.content_id = c.id),
     0
-  ) AS share_count`;
+  ) AS share_count,
+  (
+    SELECT json_object(
+      'kind', m.kind,
+      'url', m.url,
+      'alt', m.alt,
+      'width', m.width,
+      'height', m.height,
+      'poster_url', m.poster_url
+    )
+    FROM content_media m
+    WHERE m.content_id = c.id
+  ) AS media_json,
+  (
+    SELECT json_group_array(
+      json_object('id', p.option_id, 'label', p.label)
+    )
+    FROM (
+      SELECT option_id, label
+      FROM poll_options
+      WHERE content_id = c.id
+      ORDER BY sort_order, option_id
+    ) AS p
+  ) AS poll_options_json`;
 
 export interface ContentRow {
   id: string;
@@ -77,6 +102,8 @@ export interface ContentRow {
   like_count: number;
   save_count: number;
   share_count: number;
+  media_json: string | null;
+  poll_options_json: string | null;
 }
 
 /** The kem khoa sap xep; khoa chi dung o server, khong gui xuong client. */
@@ -91,13 +118,54 @@ function asCount(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+const POLL_OPTION_ID = /^o[1-4]$/;
+
+/** Chi nhan o1..o4 + label hop le; bo mang rong / hong. */
+export function readPollOptions(value: unknown): ContentPollOption[] | undefined {
+  let raw = value;
+
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (!text || text === "null") return undefined;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+  const options: ContentPollOption[] = [];
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as { id?: unknown; label?: unknown };
+    if (typeof row.id !== "string" || !POLL_OPTION_ID.test(row.id)) continue;
+    if (typeof row.label !== "string") continue;
+    const label = row.label.trim().replace(/\s+/g, " ");
+    if (!label || label.length > 120) continue;
+    if (options.some((item) => item.id === row.id)) continue;
+    options.push({ id: row.id, label });
+  }
+
+  return options.length >= 2 ? options : undefined;
+}
+
 export function mapRow(row: ContentRow): RankedContent {
   const hasArticle = Number(row.has_article) === 1;
+  const format = isContentFormat(row.format) ? row.format : "text";
+  const image =
+    format === "image" ? readContentImage(row.media_json) : undefined;
+  const video =
+    format === "video" ? readContentVideo(row.media_json) : undefined;
+  const pollOptions =
+    format === "poll" ? readPollOptions(row.poll_options_json) : undefined;
 
   return {
     id: row.id,
     slug: row.slug,
-    format: isContentFormat(row.format) ? row.format : "text",
+    format,
     kind: row.kind as ContentKind,
     status: row.status as ContentStatus,
     category: row.category,
@@ -111,6 +179,9 @@ export function mapRow(row: ContentRow): RankedContent {
     likeCount: asCount(row.like_count),
     saveCount: asCount(row.save_count),
     shareCount: asCount(row.share_count),
+    ...(image ? { image } : {}),
+    ...(video ? { video } : {}),
+    ...(pollOptions ? { pollOptions } : {}),
     publishedAt: row.published_at,
     rankKey: row.rank_key,
     seq: row.seq
@@ -136,7 +207,10 @@ export function toContentItem(row: RankedContent): ContentItem {
     saveCount: row.saveCount ?? 0,
     shareCount: row.shareCount ?? 0,
     ...(typeof row.liked === "boolean" ? { liked: row.liked } : {}),
-    ...(typeof row.saved === "boolean" ? { saved: row.saved } : {})
+    ...(typeof row.saved === "boolean" ? { saved: row.saved } : {}),
+    ...(row.image ? { image: row.image } : {}),
+    ...(row.video ? { video: row.video } : {}),
+    ...(row.pollOptions ? { pollOptions: row.pollOptions } : {})
   };
 }
 

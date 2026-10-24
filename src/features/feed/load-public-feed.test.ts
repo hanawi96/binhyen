@@ -571,6 +571,78 @@ describe("loadPublicFeed trên SQL thật", () => {
     expect(item?.saved).toBeUndefined();
   });
 
+  it("feed gắn image / video / pollOptions từ bảng media và poll", async () => {
+    const slice = posts.slice(0, 3);
+    const { db, sqlite } = setup(slice);
+    const [imageId, videoId, pollId] = slice.map((post) => post.id);
+
+    sqlite.prepare(`UPDATE contents SET format = 'image' WHERE id = ?`).run(imageId);
+    sqlite.prepare(`UPDATE contents SET format = 'video' WHERE id = ?`).run(videoId);
+    sqlite.prepare(`UPDATE contents SET format = 'poll' WHERE id = ?`).run(pollId);
+
+    sqlite
+      .prepare(
+        `INSERT INTO content_media (content_id, kind, url, alt, poster_url, width, height)
+         VALUES (?, 'image', ?, 'Núi', NULL, 720, 900)`
+      )
+      .run(imageId, "https://example.com/mountain.jpg");
+
+    sqlite
+      .prepare(
+        `INSERT INTO content_media (content_id, kind, url, alt, poster_url, width, height)
+         VALUES (?, 'video', ?, 'Clip', ?, 1280, 720)`
+      )
+      .run(
+        videoId,
+        "https://example.com/clip.mp4",
+        "https://example.com/poster.jpg"
+      );
+
+    sqlite
+      .prepare(
+        `INSERT INTO poll_options (content_id, option_id, label, sort_order)
+         VALUES (?, 'o1', 'Êm', 0), (?, 'o2', 'Mệt', 1)`
+      )
+      .run(pollId, pollId);
+
+    const page = await loadPublicFeed(db, {
+      topic: "all",
+      mood: "all",
+      cursor: null,
+      limit: 3,
+      origin: () => 0
+    });
+
+    const byId = new Map(page.items.map((item) => [item.id, item]));
+
+    expect(byId.get(imageId)).toMatchObject({
+      format: "image",
+      image: {
+        url: "https://example.com/mountain.jpg",
+        alt: "Núi",
+        width: 720,
+        height: 900
+      }
+    });
+    expect(byId.get(videoId)).toMatchObject({
+      format: "video",
+      video: {
+        url: "https://example.com/clip.mp4",
+        poster: "https://example.com/poster.jpg",
+        width: 1280,
+        height: 720
+      }
+    });
+    expect(byId.get(pollId)).toMatchObject({
+      format: "poll",
+      pollOptions: [
+        { id: "o1", label: "Êm" },
+        { id: "o2", label: "Mệt" }
+      ]
+    });
+    expect(byId.get(pollId)).not.toHaveProperty("image");
+  });
+
   it("có mã ẩn danh: gắn liked/saved vào thẻ trong cùng trang", async () => {
     const { db, sqlite } = setup(posts.slice(0, 5));
     const actor = "CcCcCcCcCcCcCcCcCcCcCc";

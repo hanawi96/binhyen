@@ -1848,11 +1848,11 @@
 
     const target = event.target;
 
-    // Khong keo the khi dang thao tac nut hoac dialog.
+    // Khong keo the khi dang thao tac nut, video/poll, hoac dialog.
     if (
       target instanceof Element &&
       target.closest(
-        "button, a, input, textarea, select, dialog"
+        "button, a, input, textarea, select, dialog, video, [data-feed-control]"
       )
     ) {
       return;
@@ -2242,6 +2242,7 @@
       >
         <ContentCard
           {content}
+          active={index === currentIndex}
           leaving={readingOut && index === currentIndex}
           onRead={openReading}
         />

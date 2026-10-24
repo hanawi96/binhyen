@@ -122,6 +122,69 @@ interface ApiResponse {
   notice?: "all-seen" | null;
 }
 
+function optionalMediaUrl(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function optionalSize(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= 1 &&
+      value <= 10000)
+  );
+}
+
+function isContentImage(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object") return false;
+  const image = value as Record<string, unknown>;
+  return (
+    optionalMediaUrl(image.url) &&
+    typeof image.alt === "string" &&
+    optionalSize(image.width) &&
+    optionalSize(image.height)
+  );
+}
+
+function isContentVideo(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object") return false;
+  const video = value as Record<string, unknown>;
+  return (
+    optionalMediaUrl(video.url) &&
+    typeof video.alt === "string" &&
+    (video.poster === null || optionalMediaUrl(video.poster)) &&
+    optionalSize(video.width) &&
+    optionalSize(video.height)
+  );
+}
+
+function isPollOptions(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length < 2 || value.length > 4) {
+    return false;
+  }
+
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return false;
+    const option = entry as Record<string, unknown>;
+    if (typeof option.id !== "string" || !/^o[1-4]$/.test(option.id)) {
+      return false;
+    }
+    if (typeof option.label !== "string" || !option.label.trim()) {
+      return false;
+    }
+    if (seen.has(option.id)) return false;
+    seen.add(option.id);
+  }
+
+  return true;
+}
+
 function isContent(value: unknown): value is ContentItem {
   if (!value || typeof value !== "object") return false;
 
@@ -152,7 +215,10 @@ function isContent(value: unknown): value is ContentItem {
     optionalCount(item.saveCount) &&
     optionalCount(item.shareCount) &&
     optionalFlag(item.liked) &&
-    optionalFlag(item.saved)
+    optionalFlag(item.saved) &&
+    isContentImage(item.image) &&
+    isContentVideo(item.video) &&
+    isPollOptions(item.pollOptions)
   );
 }
 

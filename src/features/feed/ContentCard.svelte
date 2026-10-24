@@ -1,13 +1,19 @@
 <script lang="ts">
   import type { ContentItem, ContentTheme } from "../content/content.types";
+  import {
+    imageAspectRatio,
+    videoAspectRatio
+  } from "../content/content-media";
+  import CardPoll from "./CardPoll.svelte";
 
   interface Props {
     content: ContentItem;
+    active?: boolean;
     leaving?: boolean;
     onRead?: () => void;
   }
 
-  let { content, leaving = false, onRead }: Props = $props();
+  let { content, active = false, leaving = false, onRead }: Props = $props();
 
   const ornaments: Record<ContentTheme, string> = {
     peace: "❋",
@@ -18,20 +24,124 @@
     cute: "♡"
   };
 
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let playing = $state(false);
+
+  const showImage = $derived(
+    content.format === "image" && !!content.image?.url
+  );
+  const showVideo = $derived(
+    content.format === "video" && !!content.video?.url
+  );
+  const showPoll = $derived(
+    content.format === "poll" &&
+      !!content.pollOptions &&
+      content.pollOptions.length >= 2
+  );
+  const mediaMode = $derived(showImage || showVideo || showPoll);
+
+  const imageRatio = $derived(imageAspectRatio(content.image));
+  const videoRatio = $derived(videoAspectRatio(content.video));
+
+  $effect(() => {
+    if (active) return;
+    const node = videoEl;
+    if (!node) return;
+    node.pause();
+    playing = false;
+  });
+
+  async function togglePlay() {
+    const node = videoEl;
+    if (!node) return;
+
+    if (node.paused) {
+      try {
+        await node.play();
+        playing = true;
+      } catch {
+        playing = false;
+      }
+      return;
+    }
+
+    node.pause();
+    playing = false;
+  }
 </script>
 
 <article
   class="stage reading"
+  class:media={mediaMode}
   class:out={leaving}
   data-theme={content.theme}
   aria-labelledby={`content-title-${content.id}`}
 >
-  <div class="ornament" aria-hidden="true">
-    {ornaments[content.theme]}
-  </div>
-  <h2 id={`content-title-${content.id}`} class="headline">
+  {#if !mediaMode}
+    <div class="ornament" aria-hidden="true">
+      {ornaments[content.theme]}
+    </div>
+  {/if}
+
+  {#if showImage && content.image}
+    <div class="frame" style={`aspect-ratio: ${imageRatio}`}>
+      <img
+        class="media-el"
+        src={content.image.url}
+        alt={content.image.alt || content.title}
+        width={content.image.width ?? undefined}
+        height={content.image.height ?? undefined}
+        loading="lazy"
+        decoding="async"
+      />
+    </div>
+  {:else if showVideo && content.video}
+    <div
+      class="frame video-frame"
+      style={`aspect-ratio: ${videoRatio}`}
+      data-feed-control
+    >
+      <video
+        bind:this={videoEl}
+        class="media-el"
+        src={content.video.url}
+        poster={content.video.poster ?? undefined}
+        playsinline
+        muted
+        preload="metadata"
+        aria-label={content.video.alt || content.title}
+        onplay={() => (playing = true)}
+        onpause={() => (playing = false)}
+        onended={() => (playing = false)}
+      ></video>
+      <button
+        type="button"
+        class="play"
+        class:playing
+        aria-label={playing ? "Tạm dừng video" : "Phát video"}
+        onclick={() => void togglePlay()}
+      >
+        {#if !playing}
+          <span class="play-icon" aria-hidden="true"></span>
+        {/if}
+      </button>
+    </div>
+  {:else if showPoll && content.pollOptions}
+    <CardPoll
+      contentId={content.id}
+      options={content.pollOptions}
+      {active}
+    />
+  {/if}
+
+  <h2
+    id={`content-title-${content.id}`}
+    class="headline"
+    class:under-media={mediaMode}
+  >
     {content.title}
   </h2>
+
   {#if content.hasArticle}
     <button type="button" class="readmore" onclick={() => onRead?.()}>
       Đọc thêm ↗
@@ -55,6 +165,11 @@
     color: var(--color-text);
   }
 
+  .stage.media {
+    justify-content: center;
+    gap: 18px;
+  }
+
   .reading {
     opacity: 1;
     transform: translateY(0);
@@ -76,6 +191,55 @@
     line-height: 1;
   }
 
+  .frame {
+    position: relative;
+    flex: 0 1 auto;
+    width: min(100%, 720px);
+    max-height: min(62dvh, 100%);
+    margin: 0 auto;
+    overflow: hidden;
+  }
+
+  .media-el {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: transparent;
+  }
+
+  .video-frame {
+    touch-action: manipulation;
+  }
+
+  .play {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .play.playing {
+    background: transparent;
+  }
+
+  .play:not(.playing) {
+    background: color-mix(in srgb, #000 18%, transparent);
+  }
+
+  .play-icon {
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 14px 0 14px 22px;
+    border-color: transparent transparent transparent
+      color-mix(in srgb, #fff 92%, transparent);
+    margin-left: 4px;
+  }
+
   .headline {
     max-width: 820px;
     margin: 0;
@@ -93,6 +257,13 @@
     line-clamp: 6;
   }
 
+  .headline.under-media {
+    max-width: min(100%, 720px);
+    font-size: clamp(22px, 3.4vw, 36px);
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
   .readmore {
     margin-top: 24px;
     padding: 10px 14px;
@@ -103,11 +274,19 @@
     font-weight: 700;
   }
 
+  .stage.media .readmore {
+    margin-top: 0;
+  }
+
   @media (max-width: 640px) {
     .headline {
       font-size: clamp(30px, 8vw, 48px);
       letter-spacing: -0.02em;
       line-height: 1.38;
+    }
+
+    .headline.under-media {
+      font-size: clamp(20px, 5.4vw, 28px);
     }
 
     .stage {
@@ -124,6 +303,16 @@
       font-size: clamp(26px, 6vw, 40px);
       -webkit-line-clamp: 5;
       line-clamp: 5;
+    }
+
+    .headline.under-media {
+      font-size: clamp(18px, 4.6vw, 26px);
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+    }
+
+    .frame {
+      max-height: min(52dvh, 100%);
     }
   }
 </style>

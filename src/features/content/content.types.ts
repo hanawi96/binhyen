@@ -134,6 +134,12 @@ export interface ContentVideo {
   height: number | null;
 }
 
+/** Nhan dap an khao sat (chua co so phieu — chi hien sau khi binh chon). */
+export interface ContentPollOption {
+  id: string;
+  label: string;
+}
+
 /**
  * Cau truc thong nhat cho moi noi dung.
  */
@@ -178,4 +184,6 @@ export interface ContentItem {
   image?: ContentImage;
   /** Co khi format = video va da gan media. */
   video?: ContentVideo;
+  /** Co khi format = poll; chi id + label, khong so phieu. */
+  pollOptions?: ContentPollOption[];
 }

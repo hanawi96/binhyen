@@ -143,6 +143,53 @@ describe("API feed requests", () => {
     expect(page.notice).toBe("all-seen");
   });
 
+  it("nhận thẻ image / video / poll trong payload", async () => {
+    const feed = source(async () =>
+      jsonResponse({
+        success: true,
+        items: [
+          {
+            ...item("img"),
+            format: "image",
+            image: {
+              url: "https://example.com/a.jpg",
+              alt: "Núi",
+              width: 720,
+              height: 900
+            }
+          },
+          {
+            ...item("vid"),
+            format: "video",
+            video: {
+              url: "https://example.com/v.mp4",
+              alt: "Clip",
+              poster: null,
+              width: 1280,
+              height: 720
+            }
+          },
+          {
+            ...item("poll"),
+            format: "poll",
+            pollOptions: [
+              { id: "o1", label: "Êm" },
+              { id: "o2", label: "Mệt" }
+            ]
+          }
+        ],
+        nextCursor: null,
+        hasMore: false
+      })
+    );
+
+    const page = await feed.loadPage("__first__", 3);
+    expect(page.items).toHaveLength(3);
+    expect(page.items[0]?.image?.url).toContain("a.jpg");
+    expect(page.items[1]?.video?.url).toContain("v.mp4");
+    expect(page.items[2]?.pollOptions?.[0]?.id).toBe("o1");
+  });
+
   it("stops when the same cursor is requested again", async () => {
     let calls = 0;
     const feed = source(async () => {
