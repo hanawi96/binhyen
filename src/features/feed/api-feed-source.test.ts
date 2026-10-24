@@ -11,6 +11,7 @@ function item(id: string): ContentItem {
   return {
     id,
     slug: id,
+    format: "text",
     kind: "quote",
     status: "published",
     category: "Bình yên",

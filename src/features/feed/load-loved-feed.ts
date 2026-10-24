@@ -1,9 +1,10 @@
 import {
+  CARD_COLUMNS,
   mapRow,
   toContentItem,
-  type ContentRow,
-  type PublicFeedPage
-} from "./load-public-feed";
+  type ContentRow
+} from "./feed-rows";
+import type { PublicFeedPage } from "./load-public-feed";
 import {
   decodeLovedCursor,
   encodeLovedCursor
@@ -32,37 +33,7 @@ export async function loadLovedFeed(
   const { results } = await db
     .prepare(
       `SELECT
-         c.id,
-         c.slug,
-         c.kind,
-         c.status,
-         c.category,
-         c.title,
-         c.description,
-         c.tag,
-         c.theme,
-         c.published_at,
-         (
-           SELECT json_group_array(ct.topic_slug)
-           FROM content_topics ct
-           WHERE ct.content_id = c.id
-         ) AS topics_json,
-         (
-           SELECT json_group_array(cm.mood_slug)
-           FROM content_moods cm
-           WHERE cm.content_id = c.id
-         ) AS moods_json,
-         (
-           SELECT CASE
-             WHEN d.body_markdown IS NOT NULL
-               AND length(trim(d.body_markdown)) > 0
-             THEN 1
-             ELSE 0
-           END
-           FROM content_details d
-           WHERE d.content_id = c.id
-           LIMIT 1
-         ) AS has_article,
+         ${CARD_COLUMNS},
          s.like_count
        FROM content_stats s
        CROSS JOIN contents c ON c.id = s.content_id

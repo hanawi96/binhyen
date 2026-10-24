@@ -1,28 +1,4 @@
-import { isContentTopic, type ContentTopic } from "../content/content.types";
-import { hashSessionToken, readSessionToken } from "./account";
 import type { ProfileStore } from "./profile";
-
-/** Chu de yeu thich cua nguoi dang dang nhap; khong co cookie thi khong goi DB. */
-export async function readSessionTopics(
-  db: D1Database,
-  cookieHeader: string | null,
-  now: number
-): Promise<ContentTopic[]> {
-  const token = readSessionToken(cookieHeader);
-  if (!token) return [];
-
-  const { results } = await db
-    .prepare(
-      `SELECT ut.topic_slug AS slug
-       FROM user_sessions s
-       JOIN user_topics ut ON ut.user_id = s.user_id
-       WHERE s.token_hash = ?1 AND s.expires_at > ?2`
-    )
-    .bind(await hashSessionToken(token), now)
-    .all<{ slug: string }>();
-
-  return results.map((row) => row.slug).filter(isContentTopic);
-}
 
 interface TopicRow {
   slug: string;

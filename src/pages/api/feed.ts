@@ -5,19 +5,24 @@ import {
   isMoodFilter,
   isTopicFilter
 } from "../../features/content/filter-contents";
-import { readSessionTopics } from "../../features/account/d1-profile-store";
+import {
+  readFeedViewer,
+  resetViewerLoop
+} from "../../features/feed/d1-viewer-state";
 import { loadLovedFeed } from "../../features/feed/load-loved-feed";
 import { loadPublicFeed } from "../../features/feed/load-public-feed";
 import { decodeLovedCursor } from "../../features/feed/loved-cursor";
 import {
-  decodeRankCursor,
-  startRankCursor
-} from "../../features/feed/rank-feed";
+  decodeRingCursor,
+  type RingCursor
+} from "../../features/feed/ring-feed";
 
 export const prerender = false;
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 20;
+/** Cursor truoc v6 (sap theo ngay dang): mo lai bo loc tu dau thay vi bao loi. */
+const LEGACY_CURSOR = /^v[1-5]:/;
 
 function readFilter<T extends string>(
   value: string | null,
@@ -143,40 +148,40 @@ export const GET: APIRoute = async ({ request }) => {
     );
   }
 
-  const cursor =
-    rawCursor === null
-      ? startRankCursor(topic, mood)
-      : decodeRankCursor(rawCursor);
+  let cursor: RingCursor | null = null;
 
-  if (
-    !cursor ||
-    cursor.topic !== topic ||
-    cursor.mood !== mood
-  ) {
-    return Response.json(
-      {
-        success: false,
-        error: "Invalid cursor"
-      },
-      { status: 400 }
-    );
+  if (rawCursor !== null && !LEGACY_CURSOR.test(rawCursor)) {
+    cursor = decodeRingCursor(rawCursor);
+
+    if (
+      !cursor ||
+      cursor.topic !== topic ||
+      cursor.mood !== mood
+    ) {
+      return Response.json(
+        {
+          success: false,
+          error: "Invalid cursor"
+        },
+        { status: 400 }
+      );
+    }
   }
 
   try {
-    const favorites =
-      rawCursor === null && topic === "all" && mood === "all"
-        ? await readSessionTopics(
-            env.DB,
-            request.headers.get("cookie"),
-            Math.floor(Date.now() / 1000)
-          )
-        : [];
+    const now = Math.floor(Date.now() / 1000);
+    const viewer = await readFeedViewer(
+      env.DB,
+      request.headers.get("cookie"),
+      now
+    );
     const page = await loadPublicFeed(env.DB, {
       topic,
       mood,
-      cursor: rawCursor,
+      cursor,
       limit,
-      favorites
+      viewer,
+      onAllSeen: () => resetViewerLoop(env.DB, viewer, now)
     });
 
     return Response.json(
@@ -185,7 +190,9 @@ export const GET: APIRoute = async ({ request }) => {
         items: page.items,
         nextCursor: page.nextCursor,
         hasMore: page.hasMore,
-        matched: page.matched
+        matched: page.matched,
+        notice: page.notice,
+        pageCursor: page.pageCursor
       },
       {
         headers: {
