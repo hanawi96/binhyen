@@ -68,6 +68,8 @@
       slug: string;
       title: string;
       description: string;
+      coverUrl?: string;
+      coverAlt?: string;
       itemCount: number;
     } | null;
   } = $props();
@@ -956,12 +958,6 @@
                 label: "Thử lại",
                 action: restartSession
               }
-  );
-
-  let collectionProgress = $derived(
-    collection
-      ? `${Math.min(currentIndex + 1, Math.max(contents.length, 1))} / ${collection.itemCount || contents.length}`
-      : ""
   );
 
   $effect(() => {
@@ -2349,16 +2345,27 @@
     <div class="atmosphere-grain"></div>
   </div>
 
-  <header class="topbar" inert={reading || sheetOpen}>
+  <header
+    class="topbar"
+    class:is-collection={collectionMode}
+    inert={reading || sheetOpen}
+  >
     {#if collection}
       <div class="collection-bar">
-        <a class="collection-back" href="/collections">← Bộ sưu tập</a>
-        <div class="collection-meta">
-          <strong>{collection.title}</strong>
-          {#if collectionProgress}
-            <span>{collectionProgress}</span>
-          {/if}
-        </div>
+        <a class="collection-back" href="/collections" aria-label="Về bộ sưu tập">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M14.5 6.5 9 12l5.5 5.5"
+            />
+          </svg>
+        </a>
+
+        <strong class="collection-title">{collection.title}</strong>
       </div>
     {:else}
       <nav
@@ -3390,46 +3397,69 @@
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
+  }
+
+  .topbar-tools :global(.ambient),
+  .topbar-tools :global(.theme-toggle) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .topbar.is-collection {
+    align-items: center;
+    gap: 10px;
+    padding-top: 12px;
   }
 
   .collection-bar {
     display: flex;
     flex: 1 1 auto;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
   }
 
   .collection-back {
-    flex: none;
-    color: var(--color-primary);
-    font-size: 13px;
-    font-weight: 700;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .collection-meta {
     display: grid;
-    gap: 2px;
-    min-width: 0;
+    flex: none;
+    place-items: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition:
+      color 0.18s ease,
+      transform 0.18s ease;
   }
 
-  .collection-meta strong {
+  .collection-back svg {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+
+  .collection-back:hover {
+    color: var(--color-primary);
+    transform: translateX(-1px);
+  }
+
+  .collection-title {
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
+    margin: 0;
+    color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: 15px;
+    font-size: 0.98rem;
     font-weight: 400;
     letter-spacing: -0.02em;
+    line-height: 1.25;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .collection-meta span {
-    color: var(--color-quiet);
-    font-size: 12px;
-    font-weight: 650;
   }
 
   .end-slot-link {
@@ -3624,6 +3654,21 @@
     .topbar {
       gap: 6px;
       padding: 14px 14px 0 4px;
+    }
+
+    .topbar.is-collection {
+      gap: 8px;
+      padding-top: 12px;
+      padding-left: 10px;
+    }
+
+    .collection-bar {
+      gap: 8px;
+    }
+
+    .collection-back {
+      width: 2.1rem;
+      height: 2.1rem;
     }
 
     .section {

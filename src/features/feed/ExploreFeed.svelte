@@ -7,6 +7,8 @@
     slug: string;
     title: string;
     description: string;
+    coverUrl?: string;
+    coverAlt?: string;
     itemCount: number;
   }
 

@@ -179,22 +179,25 @@
   }
 
   .stage.media {
+    /* Ảnh co trước; tiêu đề không bị stage cắt chân chữ. */
     justify-content: center;
-    gap: 18px;
+    gap: 14px;
+    padding-bottom: 20px;
   }
 
   .card-actions {
     display: flex;
     flex: 0 0 auto;
+    flex-shrink: 0;
     justify-content: center;
+    align-self: stretch;
     width: 100%;
     margin: 0 0 0.85rem;
-    transform: translateY(-28px);
+    padding-inline: 4px;
   }
 
   .stage.media .card-actions {
     margin-bottom: 1rem;
-    transform: translateY(-22px);
   }
 
   @media (min-width: 641px) {
@@ -222,6 +225,7 @@
 
   .topic-label {
     display: inline-flex;
+    flex-shrink: 0;
     align-items: center;
     justify-content: center;
     gap: 0.65em;
@@ -253,8 +257,14 @@
     flex: 0 1 auto;
     width: min(100%, 720px);
     max-height: min(62dvh, 100%);
+    min-height: 0;
     margin: 0 auto;
     overflow: hidden;
+  }
+
+  /* Chừa chỗ cố định cho tiêu đề (+ topic/actions) — ảnh không nuốt hết chiều cao. */
+  .stage.media .frame {
+    max-height: min(58dvh, calc(100% - 5.5rem));
   }
 
   .media-el {
@@ -298,6 +308,7 @@
   }
 
   .headline {
+    flex: 0 0 auto;
     max-width: 820px;
     margin: 0;
     overflow: hidden;
@@ -314,11 +325,18 @@
     line-clamp: 6;
   }
 
+  /**
+   * Tiêu đề dưới ảnh: bỏ line-clamp/-webkit-box (cắt descender serif),
+   * không co trong flex — tránh bị .stage overflow cắt đáy.
+   */
   .headline.under-media {
+    display: block;
     max-width: min(100%, 720px);
+    overflow: visible;
     font-size: clamp(22px, 3.4vw, 36px);
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
+    line-height: 1.42;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
   }
 
   .readmore {
@@ -344,10 +362,20 @@
 
     .headline.under-media {
       font-size: clamp(20px, 5.4vw, 28px);
+      line-height: 1.45;
     }
 
+    /* Cân đều hai bên — không còn chừa cột rail phải (đã chuyển thành hàng ngang). */
     .stage {
-      padding: 8px 52px 12px 12px;
+      padding: 8px 20px 12px;
+    }
+
+    .stage.media {
+      padding-bottom: 18px;
+    }
+
+    .stage.media .frame {
+      max-height: min(50dvh, calc(100% - 5.25rem));
     }
   }
 
@@ -364,12 +392,14 @@
 
     .headline.under-media {
       font-size: clamp(18px, 4.6vw, 26px);
-      -webkit-line-clamp: 2;
-      line-clamp: 2;
     }
 
     .frame {
       max-height: min(52dvh, 100%);
+    }
+
+    .stage.media .frame {
+      max-height: min(46dvh, calc(100% - 4.75rem));
     }
   }
 </style>

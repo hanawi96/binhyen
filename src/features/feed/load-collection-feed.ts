@@ -17,6 +17,8 @@ export interface CollectionFeedPage extends PublicFeedPage {
     slug: string;
     title: string;
     description: string;
+    coverUrl: string;
+    coverAlt: string;
     itemCount: number;
   };
 }
@@ -87,6 +89,8 @@ export async function loadCollectionFeed(
       slug: meta.slug,
       title: meta.title,
       description: meta.description,
+      coverUrl: meta.coverUrl,
+      coverAlt: meta.coverAlt,
       itemCount: meta.itemCount
     },
     items: rows.map((row) => toContentItem(mapRow(row))),
