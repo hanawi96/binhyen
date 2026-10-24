@@ -29,6 +29,7 @@ describe("parsePostDraft", () => {
         imageHeight: null,
         posterUrl: "",
         pollOptions: [],
+        collectionIds: [],
         theme: "nature",
         category: "Thiên nhiên kỳ thú"
       }

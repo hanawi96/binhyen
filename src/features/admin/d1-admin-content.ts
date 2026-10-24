@@ -1,3 +1,7 @@
+import {
+  collectionMembershipStatements,
+  listCollectionIdsForContent
+} from "../collections/d1-collections";
 import { contentFingerprint, normalizeSlug } from "../content/content-lifecycle";
 import { readContentFormat } from "../content/content-format";
 import {
@@ -71,6 +75,7 @@ export interface AdminContent {
   imageHeight: number | null;
   posterUrl: string;
   pollOptions: string[];
+  collectionIds: string[];
   updatedAt: number;
   publishedAt: number | null;
 }
@@ -181,6 +186,7 @@ function mapDetail(row: DetailRow): AdminContent {
     imageHeight: null,
     posterUrl: "",
     pollOptions: [],
+    collectionIds: [],
     updatedAt: row.updated_at,
     publishedAt: row.published_at
   };
@@ -450,7 +456,7 @@ export async function getAdminContent(
   if (!row) return null;
 
   const detail = mapDetail(row);
-  const [pollRows, media] = await Promise.all([
+  const [pollRows, media, collectionIds] = await Promise.all([
     db
       .prepare(
         `SELECT label
@@ -474,7 +480,8 @@ export async function getAdminContent(
         poster_url: string | null;
         width: number | null;
         height: number | null;
-      }>()
+      }>(),
+    listCollectionIdsForContent(db, id)
   ]);
 
   return {
@@ -484,7 +491,8 @@ export async function getAdminContent(
     imageWidth: media?.width ?? null,
     imageHeight: media?.height ?? null,
     posterUrl: media?.poster_url ?? "",
-    pollOptions: pollRows.results.map((item) => item.label)
+    pollOptions: pollRows.results.map((item) => item.label),
+    collectionIds
   };
 }
 
@@ -685,6 +693,10 @@ function childStatements(
       );
     });
   }
+
+  statements.push(
+    ...collectionMembershipStatements(db, id, draft.collectionIds)
+  );
 
   return statements;
 }

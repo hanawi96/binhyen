@@ -6,6 +6,7 @@
   import type { ContentItem } from "../content/content.types";
   import {
     createApiFeedSource,
+    createCollectionFeedSource,
     FeedLoadError,
     isFeedAbort
   } from "./api-feed-source";
@@ -45,7 +46,8 @@
     initialMatched = true,
     initialNotice = null,
     initialUser,
-    initialPostNews = 0
+    initialPostNews = 0,
+    collection = null
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
@@ -54,7 +56,15 @@
     initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
+    collection?: {
+      slug: string;
+      title: string;
+      description: string;
+      itemCount: number;
+    } | null;
   } = $props();
+
+  const collectionMode = $derived(collection !== null);
 
   let selectedTopic = $state<TopicFilter>("all");
   let selectedMood = $state<MoodFilter>("all");
@@ -86,6 +96,7 @@
   const ALL_SEEN_NOTE =
     "Bạn đã xem hết một vòng. Đang mở lại những bài cũ hơn.";
   const END_NOTE = "Bạn đã xem hết những điều đang có.";
+  const COLLECTION_END_NOTE = "Bạn đã xem hết bộ này.";
   const RESTART_LABEL = "Xem lại từ đầu";
   const RETRY_LABEL = "Thử lại";
   const LOAD_ERROR_MESSAGES = [
@@ -96,7 +107,13 @@
   /** Trang rong (toan bai da xem) van con cursor: tu tai tiep, toi da vay lan. */
   const MAX_EMPTY_CONTINUES = 5;
 
-  let source = createApiFeedSource("all", "all");
+  let source = collection
+    ? createCollectionFeedSource(collection.slug)
+    : createApiFeedSource("all", "all");
+
+  let introOpen = $state(
+    !!collection?.description && initialItems.length > 0
+  );
 
   const startingCursor =
     initialItems.length > 0 ? initialCursor : "__first__";
@@ -144,11 +161,21 @@
   let reading = $state(false);
   let readerShown = $state(false);
   let articleBlocks = $state<ArticleBlock[]>([]);
+  /** Chi render body khi khop dung bai dang mo — tranh flash noi dung cu. */
+  let articleForId = $state<string | null>(null);
   let articleReady = $state(false);
   let articleError = $state("");
   let readScroll = $state<HTMLElement | null>(null);
   let readSerial = 0;
   let closeTimer = 0;
+  let readerShowTimer = 0;
+
+  function clearArticleBody() {
+    articleBlocks = [];
+    articleForId = null;
+    articleReady = false;
+    articleError = "";
+  }
 
   const readMarks: Record<string, string> = {
     peace: "❋",
@@ -815,26 +842,41 @@
           label: "Thử tải lại",
           action: retryLoad
         }
-      : lovedMode
+      : collectionMode
         ? {
-            title: "Chưa có bài nào được yêu thích",
-            text: "Chạm ♡ ở một bài để bài ấy xuất hiện ở đây.",
-            label: "Xem Dành cho bạn",
-            action: showAll
+            title: COLLECTION_END_NOTE,
+            text: "Quay lại danh sách để chọn bộ khác.",
+            label: "Xem bộ sưu tập",
+            action: () => {
+              window.location.href = "/collections";
+            }
           }
-        : filtered && !directMatch
+        : lovedMode
           ? {
-              title: "Chưa có nội dung cho lựa chọn này",
-              text: "Hãy thử một chủ đề khác.",
-              label: "Xem tất cả",
+              title: "Chưa có bài nào được yêu thích",
+              text: "Chạm ♡ ở một bài để bài ấy xuất hiện ở đây.",
+              label: "Xem Dành cho bạn",
               action: showAll
             }
-          : {
-              title: "Chưa có nội dung",
-              text: "Những điều đẹp đẽ sẽ xuất hiện khi có bài mới.",
-              label: "Thử lại",
-              action: restartSession
-            }
+          : filtered && !directMatch
+            ? {
+                title: "Chưa có nội dung cho lựa chọn này",
+                text: "Hãy thử một chủ đề khác.",
+                label: "Xem tất cả",
+                action: showAll
+              }
+            : {
+                title: "Chưa có nội dung",
+                text: "Những điều đẹp đẽ sẽ xuất hiện khi có bài mới.",
+                label: "Thử lại",
+                action: restartSession
+              }
+  );
+
+  let collectionProgress = $derived(
+    collection
+      ? `${Math.min(currentIndex + 1, Math.max(contents.length, 1))} / ${collection.itemCount || contents.length}`
+      : ""
   );
 
   $effect(() => {
@@ -883,6 +925,8 @@
 
       seenIds.add(id);
       seenCount = seenIds.size;
+
+      if (collectionMode) return;
 
       const storage = browserStorage();
       if (storage) {
@@ -1483,7 +1527,11 @@
 
   function openReading(target?: ReadItem, fromMine = false) {
     const item = target ?? contents[currentIndex];
-    if (!item || reading) return;
+    if (!item) return;
+    // Dang mo dung bai nay roi — khong fetch lai.
+    if (reading && readItem?.id === item.id && articleForId === item.id) {
+      return;
+    }
     if (!fromMine && (animating || replaceOnLoad)) return;
     if (!fromMine && dragging && dragAxis !== "x") return;
 
@@ -1500,34 +1548,41 @@
     }
 
     window.clearTimeout(closeTimer);
+    window.clearTimeout(readerShowTimer);
     const serial = ++readSerial;
+    const openedId = item.id;
+
+    // Clear body TRUOC khi hien reader — khong de doan cu lo qua fade.
+    clearArticleBody();
     readItem = item;
     readFromMine = fromMine;
-    articleBlocks = [];
-    articleReady = false;
-    articleError = "";
     reading = true;
     readerShown = false;
 
-    window.setTimeout(() => {
-      if (serial === readSerial) readerShown = true;
-    }, 32);
+    // 2 rAF: dam bao DOM da empty truoc khi fade-in khung reader.
+    readerShowTimer = window.setTimeout(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (serial === readSerial) readerShown = true;
+        });
+      });
+    }, 16);
 
-    void fetch(`/api/contents/${encodeURIComponent(item.id)}`)
+    void fetch(`/api/contents/${encodeURIComponent(openedId)}`)
       .then(async (response) => {
-        if (serial !== readSerial) return;
+        if (serial !== readSerial || readItem?.id !== openedId) return;
         if (!response.ok) {
+          clearArticleBody();
           articleError = "Không mở được bài.";
-          articleReady = true;
           return;
         }
 
         const body = articleBody(await response.json());
 
-        if (serial !== readSerial) return;
+        if (serial !== readSerial || readItem?.id !== openedId) return;
         if (body === null) {
+          clearArticleBody();
           articleError = "Không mở được bài.";
-          articleReady = true;
           return;
         }
 
@@ -1540,17 +1595,18 @@
           blocks = blocks.slice(1);
         }
 
-        if (blocks.length === 0 && item.description) {
-          blocks = [{ kind: "paragraph", text: item.description }];
-        }
+        // Khong fallback description — tranh hien doan chu khong phai than bai.
+        if (serial !== readSerial || readItem?.id !== openedId) return;
 
         articleBlocks = blocks;
+        articleForId = openedId;
         articleReady = true;
+        articleError = "";
       })
       .catch(() => {
-        if (serial !== readSerial) return;
+        if (serial !== readSerial || readItem?.id !== openedId) return;
+        clearArticleBody();
         articleError = "Không mở được bài.";
-        articleReady = true;
       });
   }
 
@@ -1559,14 +1615,15 @@
 
     readerShown = false;
     readSerial += 1;
+    // Xoa body ngay khi bat dau dong — khong giu chu cu trong DOM luc fade.
+    clearArticleBody();
     window.clearTimeout(closeTimer);
+    window.clearTimeout(readerShowTimer);
     closeTimer = window.setTimeout(() => {
       reading = false;
       readItem = null;
       readFromMine = false;
-      articleBlocks = [];
-      articleReady = false;
-      articleError = "";
+      clearArticleBody();
     }, 200);
   }
 
@@ -1580,15 +1637,16 @@
     const nextIndex = currentIndex + 1;
     readerShown = false;
     readSerial += 1;
+    clearArticleBody();
     window.clearTimeout(closeTimer);
+    window.clearTimeout(readerShowTimer);
     closeTimer = window.setTimeout(() => {
       setOffset(0);
       currentIndex = nextIndex;
       reading = false;
       readItem = null;
-      articleBlocks = [];
-      articleReady = false;
-      articleError = "";
+      readFromMine = false;
+      clearArticleBody();
 
       if (
         hasMore &&
@@ -2186,25 +2244,38 @@
 
 <div class="swipe-deck" class:is-reading={reading}>
   <header class="topbar" inert={reading || sheetOpen}>
-    <nav
-      class="sections"
-      aria-label="Mục nội dung"
-      bind:this={sectionBar}
-      use:sectionScroll
-    >
-      {#each sections as section (section.key)}
-        <button
-          type="button"
-          class="section"
-          class:active={section.key === selectedSection}
-          aria-pressed={section.key === selectedSection}
-          data-section={section.key}
-          onclick={() => chooseSection(section.key)}
-        >
-          {section.label}
-        </button>
-      {/each}
-    </nav>
+    {#if collection}
+      <div class="collection-bar">
+        <a class="collection-back" href="/collections">← Bộ sưu tập</a>
+        <div class="collection-meta">
+          <strong>{collection.title}</strong>
+          {#if collectionProgress}
+            <span>{collectionProgress}</span>
+          {/if}
+        </div>
+      </div>
+    {:else}
+      <nav
+        class="sections"
+        aria-label="Mục nội dung"
+        bind:this={sectionBar}
+        use:sectionScroll
+      >
+        {#each sections as section (section.key)}
+          <button
+            type="button"
+            class="section"
+            class:active={section.key === selectedSection}
+            aria-pressed={section.key === selectedSection}
+            data-section={section.key}
+            onclick={() => chooseSection(section.key)}
+          >
+            {section.label}
+          </button>
+        {/each}
+        <a class="section section-link" href="/collections">Bộ sưu tập</a>
+      </nav>
+    {/if}
     <div class="topbar-tools">
       <AmbientPanel />
       <ThemeToggle />
@@ -2265,6 +2336,15 @@
         <p>{emptyCopy.text}</p>
         <button type="button" onclick={emptyCopy.action}>
           {emptyCopy.label}
+        </button>
+      </div>
+    {/if}
+
+    {#if collectionMode && introOpen && collection?.description}
+      <div class="collection-intro" role="dialog" aria-label="Lời mở đầu">
+        <p>{collection.description}</p>
+        <button type="button" onclick={() => (introOpen = false)}>
+          Bắt đầu vuốt
         </button>
       </div>
     {/if}
@@ -2488,39 +2568,48 @@
       aria-labelledby={`read-title-${item.id}`}
     >
       <div class="reader-scroll" bind:this={readScroll}>
-      <div class="reader-column">
-        <h2 id={`read-title-${item.id}`}>{item.title}</h2>
+        {#key item.id}
+          <div
+            class="reader-column"
+            class:body-ready={articleReady &&
+              articleForId === item.id &&
+              !articleError}
+          >
+            <h2 id={`read-title-${item.id}`}>{item.title}</h2>
 
-        {#if articleError}
-          <p class="reader-wait">{articleError}</p>
-        {:else if !articleReady}
-          <p class="reader-wait">Đang mở bài…</p>
-        {:else}
-          {#each articleBlocks as block, index (`${block.kind}-${index}`)}
-            {#if block.kind === "heading"}
-              <h3>{block.text}</h3>
-            {:else if block.kind === "quote"}
-              <blockquote class="reader-graph">
-                {#each splitSentences(block.text) as line, lineIndex (lineIndex)}
-                  <span class="reader-line">
-                    {#if lineIndex === 0}
-                      <span class="reader-ornament" aria-hidden="true">{readMarks[item.theme] ?? "❋"}</span>
-                    {/if}
-                    {line}
-                  </span>
-                {/each}
-              </blockquote>
+            {#if articleError}
+              <p class="reader-wait">{articleError}</p>
+            {:else if !(articleReady && articleForId === item.id)}
+              <p class="reader-wait">Đang mở bài…</p>
             {:else}
-              <p class="reader-graph">
-                {#each splitSentences(block.text) as line, lineIndex (lineIndex)}
-                  <span class="reader-line">{line}</span>
-                {/each}
-              </p>
+              {#each articleBlocks as block, index (`${item.id}-${block.kind}-${index}`)}
+                {#if block.kind === "heading"}
+                  <h3>{block.text}</h3>
+                {:else if block.kind === "quote"}
+                  <blockquote class="reader-graph">
+                    {#each splitSentences(block.text) as line, lineIndex (`${item.id}-q-${index}-${lineIndex}`)}
+                      <span class="reader-line">
+                        {#if lineIndex === 0}
+                          <span class="reader-ornament" aria-hidden="true"
+                            >{readMarks[item.theme] ?? "❋"}</span
+                          >
+                        {/if}
+                        {line}
+                      </span>
+                    {/each}
+                  </blockquote>
+                {:else}
+                  <p class="reader-graph">
+                    {#each splitSentences(block.text) as line, lineIndex (`${item.id}-p-${index}-${lineIndex}`)}
+                      <span class="reader-line">{line}</span>
+                    {/each}
+                  </p>
+                {/if}
+              {/each}
+              <p class="reader-end">Hết bài.</p>
             {/if}
-          {/each}
-          <p class="reader-end">Hết bài.</p>
-        {/if}
-      </div>
+          </div>
+        {/key}
       </div>
     </article>
   {/if}
@@ -2548,14 +2637,18 @@
   <div class="end-slot" aria-live="polite">
     {#if atEnd}
       <div class="end-slot-face">
-        <span>{END_NOTE}</span>
-        <button type="button" onclick={restartSession}>
-          {RESTART_LABEL}
-        </button>
+        <span>{collectionMode ? COLLECTION_END_NOTE : END_NOTE}</span>
+        {#if collectionMode}
+          <a class="end-slot-link" href="/collections">Xem bộ sưu tập</a>
+        {:else}
+          <button type="button" onclick={restartSession}>
+            {RESTART_LABEL}
+          </button>
+        {/if}
       </div>
     {/if}
     <div class="end-slot-sizer" aria-hidden="true">
-      <span>{END_NOTE}</span>
+      <span>{collectionMode ? COLLECTION_END_NOTE : END_NOTE}</span>
       <span class="end-slot-button">{RESTART_LABEL}</span>
     </div>
   </div>
@@ -2634,9 +2727,11 @@
 
 <style>
   .swipe-deck {
+    position: relative;
     display: flex;
     flex-direction: column;
     width: 100%;
+    height: 100%;
     min-width: 0;
   }
 
@@ -3170,6 +3265,78 @@
     gap: 8px;
   }
 
+  .collection-bar {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .collection-back {
+    flex: none;
+    color: var(--color-primary);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .collection-meta {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .collection-meta strong {
+    overflow: hidden;
+    font-family: var(--font-editorial);
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .collection-meta span {
+    color: var(--color-quiet);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .collection-intro {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: grid;
+    place-content: center;
+    gap: 18px;
+    padding: 24px 60px;
+    background: color-mix(in srgb, var(--color-background) 88%, transparent);
+    text-align: center;
+  }
+
+  .collection-intro p {
+    margin: 0;
+    max-width: 28rem;
+    font-family: var(--font-editorial);
+    font-size: clamp(1.25rem, 3.5vw, 1.7rem);
+    letter-spacing: -0.02em;
+    line-height: 1.4;
+  }
+
+  .collection-intro button,
+  .end-slot-link {
+    justify-self: center;
+    padding: 10px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
   .sections {
     position: relative;
     display: flex;
@@ -3189,6 +3356,12 @@
       #000 calc(100% - 22px),
       transparent 100%
     );
+  }
+
+  .section-link {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
   }
 
   .sections::-webkit-scrollbar {
@@ -3432,30 +3605,31 @@
   .swipe-deck.is-reading .topbar,
   .swipe-deck.is-reading .bottom {
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
   }
 
   .swipe-deck.is-reading .deck-viewport {
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
     transform: translateY(-16px);
   }
 
   .reader {
     position: absolute;
-    top: 72px;
-    right: 0;
-    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-    left: 0;
+    inset: 0;
     z-index: 4;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* Trong suốt — nền gradient explore-page xuyên suốt, không dải header/footer. */
+    background: transparent;
     opacity: 0;
-    transform: translate3d(var(--read-drag-x, 0px), 16px, 0);
+    transform: translate3d(var(--read-drag-x, 0px), 18px, 0);
     transition:
-      opacity 200ms ease,
-      transform 200ms ease !important;
+      opacity 220ms ease,
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
     container-type: inline-size;
     touch-action: pan-y;
   }
@@ -3659,7 +3833,8 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding-bottom: 28px;
+    padding-top: max(28px, calc(env(safe-area-inset-top, 0px) + 16px));
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
 
   .reader-column {
@@ -3670,6 +3845,21 @@
 
   .reader-scroll .reader-column {
     padding-bottom: 32px;
+  }
+
+  .reader-column.body-ready :is(h3, .reader-graph, .reader-end) {
+    animation: reader-body-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes reader-body-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .reader h2 {
@@ -3730,11 +3920,6 @@
   }
 
   @media (max-width: 640px) {
-    .reader {
-      top: 58px;
-      bottom: calc(60px + env(safe-area-inset-bottom, 0px));
-    }
-
     .reader-dock {
       padding: 8px 14px max(10px, calc(env(safe-area-inset-bottom) + 6px));
       gap: 12px;
@@ -3746,7 +3931,8 @@
     }
 
     .reader-scroll {
-      padding-bottom: 16px;
+      padding-top: max(20px, calc(env(safe-area-inset-top, 0px) + 12px));
+      padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
     }
 
     .read-rail {

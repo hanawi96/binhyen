@@ -41,7 +41,8 @@ describe("Content draft", () => {
         imageWidth: null,
         imageHeight: null,
         posterUrl: "",
-        pollOptions: []
+        pollOptions: [],
+        collectionIds: []
       }
     });
   });

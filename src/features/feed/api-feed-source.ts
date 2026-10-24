@@ -386,3 +386,117 @@ export function createApiFeedSource(
     }
   };
 }
+
+interface CollectionFeedOptions {
+  origin?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * Nguon feed bo suu tap: GET /api/collections/:slug/feed
+ * Khong dung topic/mood/seen.
+ */
+export function createCollectionFeedSource(
+  slug: string,
+  options: CollectionFeedOptions = {}
+) {
+  const completed = new Set<string>();
+
+  return {
+    firstPage(_pageSize: number): FeedPage {
+      return {
+        items: [],
+        nextCursor: FIRST_CURSOR
+      };
+    },
+
+    async loadPage(
+      cursor: string,
+      pageSize: number,
+      userSignal?: AbortSignal
+    ): Promise<FeedPage> {
+      const size = Math.max(1, Math.min(20, Math.floor(pageSize) || 3));
+      const origin = pageOrigin(options.origin);
+
+      if (!origin) {
+        throw new FeedLoadError(
+          "network",
+          "Feed API is only available in the browser"
+        );
+      }
+
+      const fetchPage = options.fetch ?? fetch;
+      const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+      if (completed.has(cursor)) {
+        throw new FeedLoadError("invalid", "Repeated feed cursor");
+      }
+
+      const url = new URL(
+        `/api/collections/${encodeURIComponent(slug)}/feed`,
+        origin
+      );
+      url.searchParams.set("limit", String(size));
+      if (cursor !== FIRST_CURSOR) {
+        url.searchParams.set("cursor", cursor);
+      }
+
+      const request = createFeedRequest(userSignal, timeoutMs);
+
+      let response: Response;
+
+      try {
+        response = await fetchPage(url, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          signal: request.signal
+        });
+      } catch (error) {
+        throw failureFromFetch(error, request.signal, userSignal);
+      } finally {
+        request.dispose();
+      }
+
+      if (!response.ok) {
+        throw new FeedLoadError(
+          "http",
+          `Collection feed HTTP ${response.status}`
+        );
+      }
+
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        throw new FeedLoadError("invalid", "Invalid API response");
+      }
+
+      if (!data || typeof data !== "object") {
+        throw new FeedLoadError("invalid", "Invalid API response");
+      }
+
+      const payload = data as Partial<ApiResponse>;
+
+      if (
+        payload.success !== true ||
+        !Array.isArray(payload.items) ||
+        !payload.items.every(isContent) ||
+        !(
+          payload.nextCursor === null ||
+          typeof payload.nextCursor === "string"
+        )
+      ) {
+        throw new FeedLoadError("invalid", "Invalid feed data");
+      }
+
+      completed.add(cursor);
+
+      return {
+        items: payload.items,
+        nextCursor: payload.nextCursor,
+        matched: true
+      };
+    }
+  };
+}

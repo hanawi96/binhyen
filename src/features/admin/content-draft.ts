@@ -15,6 +15,7 @@ import {
   type ContentTopic
 } from "../content/content.types";
 import { lookFromTopic } from "../content/topic-look";
+import { parseCollectionIdList } from "../collections/d1-collections";
 import { parsePollOptions } from "../interactions/content-polls";
 
 export interface ContentDraftInput {
@@ -39,6 +40,8 @@ export interface ContentDraftInput {
   posterUrl: string;
   /** Nhan dap an khi format = poll (2–4). */
   pollOptions: string[];
+  /** Ids bo suu tap (co the rong). */
+  collectionIds: string[];
 }
 
 export type AdminSort = "updated" | "created";
@@ -172,6 +175,10 @@ export function parseContentDraft(
   let imageHeight: number | null = null;
   let posterUrl = "";
   let pollOptions: string[] = [];
+  const collectionIds = parseCollectionIdList(source.collectionIds);
+  if (collectionIds === null) {
+    return { ok: false, error: "Danh sách bộ sưu tập không hợp lệ." };
+  }
 
   if (format === "image" || format === "video") {
     const url = parseHttpsMediaUrl(source.imageUrl);
@@ -268,6 +275,7 @@ export function parseContentDraft(
       imageHeight,
       posterUrl,
       pollOptions,
+      collectionIds,
       ...lookFromTopic(topics[0])
     }
   };

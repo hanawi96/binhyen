@@ -3,6 +3,13 @@
   import type { ContentItem } from "../content/content.types";
   import SwipeDeck from "./SwipeDeck.svelte";
 
+  export interface CollectionView {
+    slug: string;
+    title: string;
+    description: string;
+    itemCount: number;
+  }
+
   let {
     initialItems = [],
     initialCursor = null,
@@ -10,7 +17,8 @@
     initialMatched = true,
     initialNotice = null,
     initialUser,
-    initialPostNews = 0
+    initialPostNews = 0,
+    collection = null
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
@@ -19,6 +27,7 @@
     initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
+    collection?: CollectionView | null;
   } = $props();
 </script>
 
@@ -31,6 +40,7 @@
     {initialNotice}
     {initialUser}
     {initialPostNews}
+    {collection}
   />
 </div>
 

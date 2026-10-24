@@ -2,7 +2,12 @@
   import ThemeToggle from "../theme/ThemeToggle.svelte";
 
   interface Props {
-    current: "contents" | "submissions" | "catalog" | "ambient";
+    current:
+      | "contents"
+      | "submissions"
+      | "catalog"
+      | "ambient"
+      | "collections";
     onleave: () => void;
     pending?: number;
   }
@@ -45,6 +50,12 @@
       aria-current={current === "ambient" ? "page" : undefined}
     >
       Nhạc nền
+    </a>
+    <a
+      href="/admin/collections"
+      aria-current={current === "collections" ? "page" : undefined}
+    >
+      Bộ sưu tập
     </a>
   </nav>
   <div class="side-links">

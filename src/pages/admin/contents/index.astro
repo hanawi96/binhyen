@@ -9,6 +9,7 @@ import {
   loadAdminCatalog
 } from "../../../features/admin/d1-admin-content";
 import AdminStudio from "../../../features/admin/AdminStudio.svelte";
+import { listCollectionsAdmin } from "../../../features/collections/d1-collections";
 import { countSubmissions } from "../../../features/moderation/d1-submissions";
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 
@@ -16,7 +17,7 @@ if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
   return Astro.redirect("/admin/login");
 }
 
-const [page, catalog, submissions] = await Promise.all([
+const [page, catalog, submissions, collections] = await Promise.all([
   listAdminContents(env.DB, {
     status: "all",
     q: "",
@@ -28,7 +29,8 @@ const [page, catalog, submissions] = await Promise.all([
     limit: 12
   }),
   loadAdminCatalog(env.DB),
-  countSubmissions(env.DB)
+  countSubmissions(env.DB),
+  listCollectionsAdmin(env.DB)
 ]);
 
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -47,6 +49,11 @@ Astro.response.headers.set("X-Robots-Tag", "noindex");
     initialStats={page.stats}
     initialTopics={catalog.topics}
     initialMoods={catalog.moods}
+    initialCollections={collections.map((item) => ({
+      id: item.id,
+      title: item.title,
+      status: item.status
+    }))}
     pending={submissions.draft}
   />
 </BaseLayout>

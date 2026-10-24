@@ -1,0 +1,34 @@
+---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import { hasAdminSession } from "../../../features/admin/admin-auth";
+import AdminCollections from "../../../features/admin/AdminCollections.svelte";
+import { listCollectionsAdmin } from "../../../features/collections/d1-collections";
+import { countSubmissions } from "../../../features/moderation/d1-submissions";
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+
+if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+  return Astro.redirect("/admin/login");
+}
+
+const [collections, submissions] = await Promise.all([
+  listCollectionsAdmin(env.DB),
+  countSubmissions(env.DB)
+]);
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex");
+---
+
+<BaseLayout
+  title="Bộ sưu tập · Bình Yên"
+  description="Quản lý các bộ nội dung curated."
+>
+  <AdminCollections
+    client:load
+    initialCollections={collections}
+    pending={submissions.draft}
+  />
+</BaseLayout>

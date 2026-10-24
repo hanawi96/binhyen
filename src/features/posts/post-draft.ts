@@ -74,6 +74,7 @@ export function parsePostDraft(
       imageHeight: null,
       posterUrl: "",
       pollOptions: [],
+      collectionIds: [],
       ...lookFromTopic(topics[0])
     }
   };

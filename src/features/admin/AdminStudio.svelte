@@ -79,6 +79,12 @@
     { id: "archived", label: "Lưu trữ" }
   ];
 
+  interface CollectionOption {
+    id: string;
+    title: string;
+    status: string;
+  }
+
   interface DraftForm {
     title: string;
     format: "text" | "image" | "video" | "poll";
@@ -93,6 +99,7 @@
     imageHeight: string;
     posterUrl: string;
     pollOptions: string[];
+    collectionIds: string[];
   }
 
   function emptyForm(): DraftForm {
@@ -109,7 +116,8 @@
       imageWidth: "",
       imageHeight: "",
       posterUrl: "",
-      pollOptions: ["", ""]
+      pollOptions: ["", ""],
+      collectionIds: []
     };
   }
 
@@ -124,6 +132,7 @@
     initialStats: AdminStats;
     initialTopics: AdminCatalogItem[];
     initialMoods: AdminCatalogItem[];
+    initialCollections?: CollectionOption[];
     pending: number;
   }
 
@@ -134,6 +143,7 @@
     initialStats,
     initialTopics,
     initialMoods,
+    initialCollections = [],
     pending
   }: Props = $props();
 
@@ -153,6 +163,7 @@
   let pageIndex = $state(0);
   let topics = $state(initialTopics);
   let moods = $state(initialMoods);
+  let collectionChoices = $state(initialCollections.map((item) => ({ ...item })));
   let listLoading = $state(false);
   let listError = $state("");
   let detailLoading = $state(false);
@@ -341,6 +352,11 @@
       imageHeight,
       posterUrl: typeof row.posterUrl === "string" ? row.posterUrl : "",
       pollOptions,
+      collectionIds: Array.isArray(row.collectionIds)
+        ? row.collectionIds.filter(
+            (id): id is string => typeof id === "string"
+          )
+        : [],
       publishedAt: row.publishedAt
     };
   }
@@ -673,7 +689,8 @@
       imageHeight:
         next.imageHeight === null ? "" : String(next.imageHeight),
       posterUrl: next.posterUrl,
-      pollOptions
+      pollOptions,
+      collectionIds: [...next.collectionIds]
     };
   }
 
@@ -1064,6 +1081,12 @@
       text: "Đã lưu trữ. Bài không còn trên feed."
     };
     await loadList();
+  }
+
+  function toggleCollection(id: string) {
+    form.collectionIds = form.collectionIds.includes(id)
+      ? form.collectionIds.filter((item) => item !== id)
+      : [...form.collectionIds, id];
   }
 
   function toggleTopic(slug: ContentTopic) {
@@ -1578,6 +1601,25 @@
                 </button>
               {/each}
             </div>
+            {#if collectionChoices.length > 0}
+              <p class="field-label" id="collection-label">Bộ sưu tập</p>
+              <div class="chips" role="group" aria-labelledby="collection-label">
+                {#each collectionChoices as collection (collection.id)}
+                  <button
+                    type="button"
+                    class="chip"
+                    aria-pressed={form.collectionIds.includes(collection.id)}
+                    onclick={() => toggleCollection(collection.id)}
+                  >
+                    {collection.title}
+                    {#if collection.status !== "published"}
+                      <span class="chip-meta">({collection.status})</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+              <p class="hint">Có thể gắn một bài vào nhiều bộ.</p>
+            {/if}
             {#if form.format === "text"}
               <label>
                 Nội dung dài, Markdown
