@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pickDescription, pickTitle } from "./lib/natural-titles.mjs";
 
 const RANK_KEY_MAX = 2147483647;
 const COUNT = readCount(20_000);
@@ -113,12 +114,13 @@ function seed(db) {
       const publishedAt =
         n >= freshStart ? now - (COUNT - n) : 1_700_000_000 - n;
 
+      const title = pickTitle(theme, n - 1);
       insertContent.run(
         id,
         `bench-${n}`,
         kind,
-        `Bai do ${n}`,
-        `Mo ta do ${n}.`,
+        title,
+        pickDescription(title, theme),
         theme,
         publishedAt,
         publishedAt,

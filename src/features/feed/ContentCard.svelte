@@ -1,9 +1,11 @@
 <script lang="ts">
-  import type { ContentItem, ContentTheme } from "../content/content.types";
+  import type { Snippet } from "svelte";
+  import type { ContentItem } from "../content/content.types";
   import {
     imageAspectRatio,
     videoAspectRatio
   } from "../content/content-media";
+  import { primaryTopicLabel } from "../content/topic-look";
   import CardPoll from "./CardPoll.svelte";
 
   interface Props {
@@ -11,18 +13,21 @@
     active?: boolean;
     leaving?: boolean;
     onRead?: () => void;
+    actions?: Snippet;
   }
 
-  let { content, active = false, leaving = false, onRead }: Props = $props();
+  let {
+    content,
+    active = false,
+    leaving = false,
+    onRead,
+    actions
+  }: Props = $props();
 
-  const ornaments: Record<ContentTheme, string> = {
-    peace: "❋",
-    discovery: "✧",
-    story: "✳",
-    nature: "❀",
-    psychology: "☼",
-    cute: "♡"
-  };
+  /** Chủ đề chính: topicLabel DB, không thì topics[0]. */
+  const displayTopic = $derived(
+    content.topicLabel?.trim() || primaryTopicLabel(content.topics)
+  );
 
   let videoEl = $state<HTMLVideoElement | null>(null);
   let playing = $state(false);
@@ -77,10 +82,18 @@
   data-theme={content.theme}
   aria-labelledby={`content-title-${content.id}`}
 >
-  {#if !mediaMode}
-    <div class="ornament" aria-hidden="true">
-      {ornaments[content.theme]}
+  {#if actions}
+    <div class="card-actions" data-feed-control>
+      {@render actions()}
     </div>
+  {/if}
+
+  {#if displayTopic}
+    <p class="topic-label">
+      <span class="topic-rule" aria-hidden="true"></span>
+      <span class="topic-text">{displayTopic}</span>
+      <span class="topic-rule" aria-hidden="true"></span>
+    </p>
   {/if}
 
   {#if showImage && content.image}
@@ -158,7 +171,7 @@
     width: 100%;
     height: 100%;
     min-height: 0;
-    padding: 8px 60px 16px;
+    padding: 8px 28px 16px;
     overflow: hidden;
     text-align: center;
     background: transparent;
@@ -168,6 +181,30 @@
   .stage.media {
     justify-content: center;
     gap: 18px;
+  }
+
+  .card-actions {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: center;
+    width: 100%;
+    margin: 0 0 0.85rem;
+    transform: translateY(-28px);
+  }
+
+  .stage.media .card-actions {
+    margin-bottom: 1rem;
+    transform: translateY(-22px);
+  }
+
+  @media (min-width: 641px) {
+    .stage {
+      padding: 8px 60px 16px;
+    }
+
+    .card-actions {
+      display: none;
+    }
   }
 
   .reading {
@@ -183,12 +220,32 @@
     transform: translateY(-16px);
   }
 
-  .ornament {
-    margin-bottom: 12px;
+  .topic-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65em;
+    margin: 0 0 12px;
     color: var(--color-ornament);
-    font-family: var(--font-editorial);
-    font-size: 34px;
-    line-height: 1;
+    font-size: 0.82rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .topic-rule {
+    display: block;
+    width: 1.35em;
+    height: 1.5px;
+    border-radius: 1px;
+    background: currentColor;
+    opacity: 0.75;
+    flex-shrink: 0;
+  }
+
+  .topic-text {
+    min-width: 0;
   }
 
   .frame {

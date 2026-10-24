@@ -111,10 +111,6 @@
     ? createCollectionFeedSource(collection.slug)
     : createApiFeedSource("all", "all");
 
-  let introOpen = $state(
-    !!collection?.description && initialItems.length > 0
-  );
-
   const startingCursor =
     initialItems.length > 0 ? initialCursor : "__first__";
 
@@ -176,6 +172,49 @@
     articleForId = null;
     articleReady = false;
     articleError = "";
+  }
+
+  function fetchArticleFor(item: ReadItem, serial: number) {
+    const openedId = item.id;
+    void fetch(`/api/contents/${encodeURIComponent(openedId)}`)
+      .then(async (response) => {
+        if (serial !== readSerial || readItem?.id !== openedId) return;
+        if (!response.ok) {
+          clearArticleBody();
+          articleError = "Không mở được bài.";
+          return;
+        }
+
+        const body = articleBody(await response.json());
+
+        if (serial !== readSerial || readItem?.id !== openedId) return;
+        if (body === null) {
+          clearArticleBody();
+          articleError = "Không mở được bài.";
+          return;
+        }
+
+        let blocks = readBlocks(body);
+
+        if (
+          blocks[0]?.kind === "heading" &&
+          blocks[0].text === item.title
+        ) {
+          blocks = blocks.slice(1);
+        }
+
+        if (serial !== readSerial || readItem?.id !== openedId) return;
+
+        articleBlocks = blocks;
+        articleForId = openedId;
+        articleReady = true;
+        articleError = "";
+      })
+      .catch(() => {
+        if (serial !== readSerial || readItem?.id !== openedId) return;
+        clearArticleBody();
+        articleError = "Không mở được bài.";
+      });
   }
 
   const readMarks: Record<string, string> = {
@@ -1529,31 +1568,26 @@
   function openReading(target?: ReadItem, fromMine = false) {
     const item = target ?? contents[currentIndex];
     if (!item) return;
-    // Dang mo dung bai nay roi — khong fetch lai.
-    if (reading && readItem?.id === item.id && articleForId === item.id) {
-      return;
-    }
+    if (reading && readItem?.id === item.id) return;
     if (!fromMine && (animating || replaceOnLoad)) return;
     if (!fromMine && dragging && dragAxis !== "x") return;
 
-    // Dong keo ngang (neu co) truoc khi mo reader.
     if (dragging) {
       cancelDragFrame();
       dragging = false;
       activePointerId = null;
       dragAxis = "none";
-      queuedOffset = 0;
-      queuedDragX = 0;
-      setOffset(0);
-      setDragX(0);
     }
+
+    // Giữ --drag-x lúc mở (tránh tiêu đề nhảy về tâm rồi nháy).
+    // Reset sau khi reader hiện — lúc đó deck đã ẩn.
+    queuedOffset = 0;
+    setOffset(0);
 
     window.clearTimeout(closeTimer);
     window.clearTimeout(readerShowTimer);
-    const serial = ++readSerial;
-    const openedId = item.id;
 
-    // Clear body TRUOC khi hien reader — khong de doan cu lo qua fade.
+    const serial = ++readSerial;
     clearArticleBody();
     readItem = item;
     readFromMine = fromMine;
@@ -1561,66 +1595,33 @@
     reading = true;
     readerShown = false;
 
-    // 2 rAF: dam bao DOM da empty truoc khi fade-in khung reader.
+    // Hiện bài cùng nhịp header: opacity + 12px, 200ms ease (qua .reader.shown).
     readerShowTimer = window.setTimeout(() => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (serial === readSerial) readerShown = true;
+          if (serial !== readSerial) return;
+          readerShown = true;
+          queuedDragX = 0;
+          setDragX(0);
         });
       });
     }, 16);
 
-    void fetch(`/api/contents/${encodeURIComponent(openedId)}`)
-      .then(async (response) => {
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-        if (!response.ok) {
-          clearArticleBody();
-          articleError = "Không mở được bài.";
-          return;
-        }
-
-        const body = articleBody(await response.json());
-
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-        if (body === null) {
-          clearArticleBody();
-          articleError = "Không mở được bài.";
-          return;
-        }
-
-        let blocks = readBlocks(body);
-
-        if (
-          blocks[0]?.kind === "heading" &&
-          blocks[0].text === item.title
-        ) {
-          blocks = blocks.slice(1);
-        }
-
-        // Khong fallback description — tranh hien doan chu khong phai than bai.
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-
-        articleBlocks = blocks;
-        articleForId = openedId;
-        articleReady = true;
-        articleError = "";
-      })
-      .catch(() => {
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-        clearArticleBody();
-        articleError = "Không mở được bài.";
-      });
+    fetchArticleFor(item, serial);
   }
 
-  /* Cùng nhịp với reader-dock: 12px + opacity, 200ms ease. */
-  const READ_SHIFT_PX = 12;
-  const READ_DISMISS_MS = 200;
+  /* Giống header/topbar: opacity + dịch 12px, 200ms ease. */
+  const READ_MOTION_MS = 200;
 
   function finishCloseReading() {
     reading = false;
     readItem = null;
     readFromMine = false;
     readerDismissing = false;
+    queuedDragX = 0;
+    queuedOffset = 0;
+    setDragX(0);
+    setOffset(0);
     clearArticleBody();
   }
 
@@ -1628,69 +1629,20 @@
     if (!reading || readerDismissing) return;
 
     readerShown = false;
-    readSerial += 1;
-    // Giữ nội dung trong lúc fade-out — clear sớm sẽ lộ title + "Đang mở bài…".
-    window.clearTimeout(closeTimer);
-    window.clearTimeout(readerShowTimer);
-    closeTimer = window.setTimeout(finishCloseReading, READ_DISMISS_MS);
-  }
-
-  function readSwipeRoot(node: HTMLElement) {
-    return node.closest(".swipe-deck") as HTMLElement | null;
-  }
-
-  function setReadDragVisual(
-    node: HTMLElement,
-    x: number,
-    opacity: number | null = null
-  ) {
-    node.style.setProperty("--read-drag-x", `${x}px`);
-    const root = readSwipeRoot(node);
-    if (opacity === null) {
-      node.style.removeProperty("--read-drag-opacity");
-      root?.style.removeProperty("--read-drag-opacity");
-      return;
-    }
-    const value = String(opacity);
-    node.style.setProperty("--read-drag-opacity", value);
-    root?.style.setProperty("--read-drag-opacity", value);
-  }
-
-  function clearReadDragVisual(node: HTMLElement) {
-    node.style.removeProperty("--read-drag-x");
-    node.style.removeProperty("--read-drag-opacity");
-    readSwipeRoot(node)?.style.removeProperty("--read-drag-opacity");
-  }
-
-  /** Vuốt phải đóng: thêm 12px theo chiều vuốt + mờ (cùng kiểu dock). */
-  function dismissReadingSwipe(node: HTMLElement, fromX: number) {
-    if (!reading || readerDismissing) return;
-
-    readSerial += 1;
-    window.clearTimeout(closeTimer);
-    window.clearTimeout(readerShowTimer);
-
-    const width = node.clientWidth || 320;
-    const progress = Math.min(fromX / width, 1);
-    const startOpacity = 1 - progress * 0.65;
-    const targetX = fromX + READ_SHIFT_PX;
-
-    node.classList.remove("is-swiping");
     readerDismissing = true;
-    // Header/dock về theo nhịp; bài vẫn hiện nhờ readerDismissing.
-    readerShown = false;
-    setReadDragVisual(node, fromX, startOpacity);
+    readSerial += 1;
+    // Giữ nội dung trong lúc fade — cùng nhịp header (opacity + 12px).
+    window.clearTimeout(closeTimer);
+    window.clearTimeout(readerShowTimer);
+    closeTimer = window.setTimeout(finishCloseReading, READ_MOTION_MS);
+  }
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setReadDragVisual(node, targetX, 0);
-      });
-    });
+  function setReadDragX(node: HTMLElement, value: number) {
+    node.style.setProperty("--read-drag-x", `${value}px`);
+  }
 
-    closeTimer = window.setTimeout(() => {
-      finishCloseReading();
-      clearReadDragVisual(node);
-    }, READ_DISMISS_MS);
+  function clearReadDragX(node: HTMLElement) {
+    node.style.removeProperty("--read-drag-x");
   }
 
   function readNext() {
@@ -1698,16 +1650,20 @@
 
     const nextIndex = currentIndex + 1;
     readerShown = false;
+    readerDismissing = true;
     readSerial += 1;
-    // Giữ nội dung trong lúc fade — tránh ghost "Đang mở bài…" khi chuyển bài.
     window.clearTimeout(closeTimer);
     window.clearTimeout(readerShowTimer);
     closeTimer = window.setTimeout(() => {
+      queuedDragX = 0;
+      queuedOffset = 0;
+      setDragX(0);
       setOffset(0);
       currentIndex = nextIndex;
       reading = false;
       readItem = null;
       readFromMine = false;
+      readerDismissing = false;
       clearArticleBody();
 
       if (
@@ -1716,7 +1672,7 @@
       ) {
         void loadMore();
       }
-    }, READ_DISMISS_MS);
+    }, READ_MOTION_MS);
   }
 
   function readGestures(node: HTMLElement) {
@@ -1728,20 +1684,13 @@
     let axis: "none" | "x" | "y" = "none";
     let frame = 0;
     let queuedX = 0;
-    let queuedOpacity = 1;
 
-    function dragOpacity(x: number, width: number) {
-      const progress = Math.min(Math.max(x, 0) / width, 1);
-      return 1 - progress * 0.65;
-    }
-
-    function paintDrag(x: number, opacity: number) {
-      queuedX = x;
-      queuedOpacity = opacity;
+    function paintX(value: number) {
+      queuedX = value;
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        setReadDragVisual(node, queuedX, queuedOpacity);
+        setReadDragX(node, queuedX);
       });
     }
 
@@ -1756,11 +1705,8 @@
     }
 
     function springBack(fromX: number) {
-      const width = node.clientWidth || 320;
-      setReadDragVisual(node, fromX, dragOpacity(fromX, width));
-      requestAnimationFrame(() => {
-        setReadDragVisual(node, 0, 1);
-      });
+      setReadDragX(node, fromX);
+      requestAnimationFrame(() => setReadDragX(node, 0));
     }
 
     function onWheel(event: WheelEvent) {
@@ -1771,9 +1717,8 @@
     }
 
     function onPointerDown(event: PointerEvent) {
-      if (!event.isPrimary || reading === false) return;
+      if (!event.isPrimary || reading === false || readerDismissing) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      if (node.classList.contains("is-dismissing")) return;
 
       const target = event.target;
       if (
@@ -1789,7 +1734,7 @@
       startTime = performance.now();
       lastX = 0;
       axis = "none";
-      setReadDragVisual(node, 0, 1);
+      setReadDragX(node, 0);
     }
 
     function onPointerMove(event: PointerEvent) {
@@ -1822,8 +1767,8 @@
 
       event.preventDefault();
       const width = node.clientWidth || 320;
-      lastX = Math.max(0, Math.min(width * 0.9, dx));
-      paintDrag(lastX, dragOpacity(lastX, width));
+      lastX = Math.max(0, Math.min(width * 0.45, dx));
+      paintX(lastX);
     }
 
     function onPointerUp(event: PointerEvent) {
@@ -1853,7 +1798,7 @@
 
       if (!wasX || cancelled) {
         if (wasX) springBack(fromX);
-        else setReadDragVisual(node, 0, 1);
+        else setReadDragX(node, 0);
         return;
       }
 
@@ -1862,7 +1807,9 @@
         (dx >= MIN_FAST_DISTANCE && velocity >= FAST_VELOCITY);
 
       if (shouldClose) {
-        dismissReadingSwipe(node, fromX);
+        // Về 0 rồi đóng — cùng hiệu ứng header (opacity + 12px, 200ms ease).
+        setReadDragX(node, 0);
+        closeReading();
         return;
       }
 
@@ -1878,7 +1825,7 @@
     return {
       destroy() {
         if (frame) cancelAnimationFrame(frame);
-        clearReadDragVisual(node);
+        clearReadDragX(node);
         node.removeEventListener("wheel", onWheel);
         node.removeEventListener("pointerdown", onPointerDown);
         node.removeEventListener("pointermove", onPointerMove);
@@ -2113,14 +2060,12 @@
       setOffset(0);
 
       if (shouldOpen) {
-        // Reader vào từ phải (cùng nhịp dock); reset kéo dưới lớp đọc.
+        // Giữ lệch vuốt; openReading reset --drag-x sau khi deck ẩn.
         openReading();
-        queuedDragX = 0;
-        setDragX(0);
         return;
       }
 
-      // Snap ve — bo .dragging de CSS transition chay.
+      // Snap về vị trí cũ.
       setDragX(getDragX(distanceX));
       requestAnimationFrame(() => {
         queuedDragX = 0;
@@ -2319,6 +2264,7 @@
       cancelLoad();
       cancelFade();
       window.clearTimeout(closeTimer);
+      window.clearTimeout(readerShowTimer);
     };
   });
 </script>
@@ -2357,8 +2303,10 @@
           >
             {section.label}
           </button>
+          {#if section.key === "loved"}
+            <a class="section section-link" href="/collections">Bộ sưu tập</a>
+          {/if}
         {/each}
-        <a class="section section-link" href="/collections">Bộ sưu tập</a>
       </nav>
     {/if}
     <div class="topbar-tools">
@@ -2366,6 +2314,7 @@
       <ThemeToggle />
     </div>
   </header>
+
   <div
     class="deck-viewport"
     class:dragging={dragging}
@@ -2396,12 +2345,25 @@
         style={`transform: translate3d(${index === currentIndex ? "var(--drag-x, 0px)" : "0px"}, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
         ontransitionend={(event) => handleTransitionEnd(event, index)}
       >
-        <ContentCard
-          {content}
-          active={index === currentIndex}
-          leaving={readingOut && index === currentIndex}
-          onRead={openReading}
-        />
+        {#if index === currentIndex && activeItem}
+          <ContentCard
+            {content}
+            active
+            leaving={readingOut}
+            onRead={openReading}
+          >
+            {#snippet actions()}
+              {@render feedRail("card")}
+            {/snippet}
+          </ContentCard>
+        {:else}
+          <ContentCard
+            {content}
+            active={false}
+            leaving={false}
+            onRead={openReading}
+          />
+        {/if}
       </div>
     {/each}
 
@@ -2425,14 +2387,6 @@
       </div>
     {/if}
 
-    {#if collectionMode && introOpen && collection?.description}
-      <div class="collection-intro" role="dialog" aria-label="Lời mở đầu">
-        <p>{collection.description}</p>
-        <button type="button" onclick={() => (introOpen = false)}>
-          Bắt đầu vuốt
-        </button>
-      </div>
-    {/if}
   </div>
 
   <footer class="bottom" inert={reading || sheetOpen}>
@@ -2459,8 +2413,8 @@
       </button>
       <button
         type="button"
-        class="dock-write"
-        aria-label="Viết nội dung"
+        class="dock-item dock-write"
+        aria-label="Viết bài"
         aria-haspopup="dialog"
         aria-expanded={writeOpen}
         onpointerdown={warmWrite}
@@ -2469,6 +2423,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 5v14M5 12h14" />
         </svg>
+        <span>Viết bài</span>
       </button>
       <button type="button" class="dock-item">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2490,9 +2445,10 @@
         {#if user}
           <span class="dock-avatar" aria-hidden="true">{userInitial}</span>
         {:else}
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="8.5" r="3.5" />
-            <path d="M5 19.5c1.4-3.2 4-4.8 7-4.8s5.6 1.6 7 4.8" />
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+            />
           </svg>
         {/if}
         <span>{user?.displayName?.trim() || "Tài khoản"}</span>
@@ -2518,55 +2474,65 @@
     </span>
   {/snippet}
 
+  {#snippet feedRail(variant: "card" | "side")}
+    {#if activeItem}
+      <div
+        class="read-rail"
+        class:read-rail--card={variant === "card"}
+        class:read-rail--side={variant === "side"}
+        inert={reading || sheetOpen}
+        aria-label="Tương tác"
+      >
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon"
+            class:active={railView?.liked ?? false}
+            aria-label="Yêu thích"
+            aria-pressed={railView?.liked ?? false}
+            onclick={() => toggleReaction("like")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
+            </svg>
+          </button>
+          {@render railCount("likeText")}
+        </div>
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon"
+            class:active={railView?.saved ?? false}
+            aria-label="Lưu"
+            aria-pressed={railView?.saved ?? false}
+            onclick={() => toggleReaction("save")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
+            </svg>
+          </button>
+          {@render railCount("saveText")}
+        </div>
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon read-share"
+            class:active={sharedId === activeItem.id}
+            aria-label={sharedId === activeItem.id ? "Đã chia sẻ" : "Chia sẻ"}
+            onclick={shareCurrent}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
+            </svg>
+          </button>
+          {@render railCount("shareText")}
+        </div>
+      </div>
+    {/if}
+  {/snippet}
+
   {#if activeItem}
-    <div class="read-rail" inert={reading || sheetOpen}>
-      <div class="rail-item">
-        <button
-          type="button"
-          class="read-icon"
-          class:active={railView?.liked ?? false}
-          aria-label="Yêu thích"
-          aria-pressed={railView?.liked ?? false}
-          onclick={() => toggleReaction("like")}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
-          </svg>
-        </button>
-        {@render railCount("likeText")}
-      </div>
-      <div class="rail-item">
-        <button
-          type="button"
-          class="read-icon"
-          class:active={railView?.saved ?? false}
-          aria-label="Lưu"
-          aria-pressed={railView?.saved ?? false}
-          onclick={() => toggleReaction("save")}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
-          </svg>
-        </button>
-        {@render railCount("saveText")}
-      </div>
-      <div class="rail-item">
-        <button
-          type="button"
-          class="read-icon read-share"
-          class:active={sharedId === activeItem.id}
-          aria-label={sharedId === activeItem.id
-            ? "Đã chia sẻ"
-            : "Chia sẻ"}
-          onclick={shareCurrent}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
-          </svg>
-        </button>
-        {@render railCount("shareText")}
-      </div>
-    </div>
+    {@render feedRail("side")}
   {/if}
 
   {#if reading && readItem}
@@ -2648,8 +2614,7 @@
     </div>
     <article
       class="reader"
-      class:shown={readerShown || readerDismissing}
-      class:is-dismissing={readerDismissing}
+      class:shown={readerShown}
       use:readGestures
       aria-labelledby={`read-title-${item.id}`}
     >
@@ -3392,28 +3357,6 @@
     font-weight: 650;
   }
 
-  .collection-intro {
-    position: absolute;
-    inset: 0;
-    z-index: 4;
-    display: grid;
-    place-content: center;
-    gap: 18px;
-    padding: 24px 60px;
-    background: color-mix(in srgb, var(--color-background) 88%, transparent);
-    text-align: center;
-  }
-
-  .collection-intro p {
-    margin: 0;
-    max-width: 28rem;
-    font-family: var(--font-editorial);
-    font-size: clamp(1.25rem, 3.5vw, 1.7rem);
-    letter-spacing: -0.02em;
-    line-height: 1.4;
-  }
-
-  .collection-intro button,
   .end-slot-link {
     justify-self: center;
     padding: 10px 14px;
@@ -3543,18 +3486,11 @@
   }
 
   .dock-write {
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 54px;
-    height: 54px;
-    margin: 0 4px;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: var(--color-primary);
-    color: var(--color-surface);
-    box-shadow: 0 8px 22px color-mix(in srgb, var(--color-primary) 32%, transparent);
+    color: var(--color-quiet);
+  }
+
+  .dock-write svg {
+    color: #f0c94a;
   }
 
   .dock-account .dock-avatar {
@@ -3579,12 +3515,6 @@
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
-  }
-
-  .dock-write svg {
-    width: 26px;
-    height: 26px;
-    stroke-width: 2;
   }
 
   .loading-slot,
@@ -3636,12 +3566,6 @@
 
     .dock .dock-item {
       min-width: 58px;
-    }
-
-    .dock-write {
-      width: 50px;
-      height: 50px;
-      margin: 0 2px;
     }
   }
 
@@ -3702,17 +3626,24 @@
     pointer-events: none;
   }
 
-  .swipe-deck.is-reader-shown .read-rail {
+  .swipe-deck.is-reader-shown .read-rail--card {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+    pointer-events: none;
+  }
+
+  .swipe-deck.is-reader-shown .read-rail--side {
     opacity: 0;
     transform: translate3d(12px, -50%, 0);
     pointer-events: none;
   }
 
-  .swipe-deck.is-reading .deck-viewport {
+  /* Cùng nhịp header (is-reader-shown): opacity + 12px, 200ms ease. */
+  .swipe-deck.is-reader-shown .deck-viewport {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transform: translateY(-16px);
+    transform: translate3d(0, -12px, 0);
   }
 
   .reader {
@@ -3727,9 +3658,8 @@
     overflow: hidden;
     box-sizing: border-box;
     padding-bottom: var(--reader-dock-space);
-    /* Trong suốt — nền gradient explore-page xuyên suốt, không dải header/footer. */
     background: transparent;
-    /* Mở: vào từ phải (vuốt trái). Đóng: ra phải (vuốt phải) — cùng kiểu dock. */
+    /* Giống header: ẩn = mờ + dịch 12px; hiện = ngược lại. */
     opacity: 0;
     transform: translate3d(
       calc(var(--read-shift-x) + var(--read-drag-x, 0px)),
@@ -3746,19 +3676,12 @@
 
   .reader.shown {
     --read-shift-x: 0px;
-    opacity: var(--read-drag-opacity, 1);
+    opacity: 1;
     transform: translate3d(var(--read-drag-x, 0px), 0, 0);
   }
 
   .reader.is-swiping {
     transition: none !important;
-  }
-
-  .reader.is-dismissing {
-    --read-shift-x: 0px;
-    pointer-events: none;
-    opacity: var(--read-drag-opacity, 1);
-    transform: translate3d(var(--read-drag-x, 0px), 0, 0);
   }
 
   .reader-dock {
@@ -3782,18 +3705,9 @@
   }
 
   .reader-dock.shown {
-    opacity: var(--read-drag-opacity, 1);
+    opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
-  }
-
-  .swipe-deck:has(.reader.is-swiping) .reader-dock,
-  .swipe-deck:has(.reader.is-dismissing) .reader-dock {
-    transition: opacity 160ms linear !important;
-  }
-
-  .swipe-deck:has(.reader.is-dismissing) .reader-dock {
-    pointer-events: none !important;
   }
 
   .reader-dock-react,
@@ -3814,15 +3728,59 @@
     text-align: left;
   }
 
-  .read-rail {
-    position: absolute;
-    top: 50%;
-    right: 22px;
-    z-index: 5;
+  /* Mobile: hàng ngang trên icon. Desktop: cột dọc bên phải. */
+  .read-rail--card {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 0;
+  }
+
+  .read-rail--side {
+    display: none;
+  }
+
+  .read-rail--card .rail-item {
+    flex-direction: row;
+    align-items: center;
     gap: 6px;
-    transform: translate3d(0, -50%, 0);
+  }
+
+  .read-rail--card .rail-count {
+    width: auto;
+    min-width: 1.1rem;
+    text-align: left;
+  }
+
+  @media (min-width: 641px) {
+    .read-rail--card {
+      display: none;
+    }
+
+    .read-rail--side {
+      position: absolute;
+      top: 50%;
+      right: 22px;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transform: translate3d(0, -50%, 0);
+    }
+
+    .read-rail--side .rail-item {
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .read-rail--side .rail-count {
+      width: 2.4rem;
+      min-width: 0;
+      text-align: center;
+    }
   }
 
   .rail-item {
@@ -4066,8 +4024,8 @@
       padding-bottom: 16px;
     }
 
-    .read-rail {
-      right: 14px;
+    .read-rail--card {
+      gap: 16px;
     }
 
     .reader-column {

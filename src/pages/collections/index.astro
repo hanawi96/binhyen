@@ -11,44 +11,65 @@ const collections = await listCollectionsPublic(env.DB).catch((error) => {
   return [];
 });
 
+const marks = ["❋", "✧", "✳", "❀", "☼", "♡"] as const;
+
 Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
 <BaseLayout
   title="Bộ sưu tập · Bình Yên"
-  description="Những tuyển tập được biên soạn — vuốt như trang chủ."
+  description="Những tuyển tập được biên soạn — chọn một bộ rồi vuốt như trang chủ."
 >
   <main class="page">
     <header class="hero">
       <a class="back" href="/">← Trang chủ</a>
+      <p class="brand" aria-hidden="true">Bình Yên</p>
       <h1>Bộ sưu tập</h1>
-      <p>Chọn một bộ — rồi vuốt từng thẻ như khi khám phá.</p>
+      <p class="lede">
+        Tuyển tập được biên soạn — chọn một bộ, rồi vuốt từng thẻ.
+      </p>
     </header>
 
-    {#if collections.length === 0}
-      <p class="empty">Chưa có bộ nào được xuất bản.</p>
-    {:else}
-      <ul class="grid">
-        {
-          collections.map((item) => (
-            <li>
-              <a class="card" href={`/c/${item.slug}`}>
-                <h2>{item.title}</h2>
-                {item.description ? <p>{item.description}</p> : null}
-                <span class="count">{item.itemCount} câu</span>
+    {
+      collections.length === 0 ? (
+        <div class="empty">
+          <p>Chưa có tuyển tập nào được mở.</p>
+          <a class="empty-home" href="/">
+            Về trang chủ
+          </a>
+        </div>
+      ) : (
+        <ol class="spread">
+          {collections.map((item, index) => (
+            <li
+              class="spread-item"
+              style={`--stagger: ${Math.min(index, 5)}`}
+            >
+              <a class="spread-link" href={`/c/${item.slug}`}>
+                <span class="spread-mark" aria-hidden="true">
+                  {marks[index % marks.length]}
+                </span>
+                <span class="spread-body">
+                  <span class="spread-title">{item.title}</span>
+                  {item.description ? (
+                    <span class="spread-desc">{item.description}</span>
+                  ) : null}
+                  <span class="spread-count">{item.itemCount} câu</span>
+                </span>
               </a>
             </li>
-          ))
-        }
-      </ul>
-    {/if}
+          ))}
+        </ol>
+      )
+    }
   </main>
 </BaseLayout>
 
 <style>
   .page {
     min-height: 100dvh;
-    padding: clamp(1.25rem, 4vw, 2.5rem);
+    padding: clamp(1.5rem, 5vw, 3rem) clamp(1.25rem, 4vw, 2.5rem)
+      clamp(3rem, 8vw, 5rem);
     background:
       radial-gradient(circle at top left, var(--scene-glow-sage) 0%, transparent 34%),
       radial-gradient(circle at bottom right, var(--scene-glow-warm) 0%, transparent 34%),
@@ -57,75 +78,206 @@ Astro.response.headers.set("Cache-Control", "no-store");
   }
 
   .hero {
-    max-width: 720px;
-    margin: 0 auto 2rem;
+    max-width: 42rem;
+    margin: 0 auto 2.75rem;
   }
 
   .back {
     display: inline-block;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
     color: var(--color-primary);
     font-size: 0.9rem;
     font-weight: 650;
     text-decoration: none;
   }
 
-  h1 {
-    margin: 0 0 0.5rem;
+  .brand {
+    margin: 0 0 0.35rem;
+    color: var(--color-brand-mark);
     font-family: var(--font-editorial);
-    font-size: clamp(2.2rem, 6vw, 3.4rem);
+    font-size: clamp(1.1rem, 2.4vw, 1.35rem);
     font-weight: 400;
-    letter-spacing: -0.03em;
+    letter-spacing: 0.04em;
   }
 
-  .hero > p,
-  .empty {
+  .hero h1 {
+    margin: 0 0 0.65rem;
+    color: var(--color-text);
+    font-family: var(--font-editorial);
+    font-size: clamp(2.6rem, 7vw, 4rem);
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 1.12;
+  }
+
+  .lede {
     margin: 0;
+    max-width: 28rem;
     color: var(--color-text-secondary);
-    max-width: 36rem;
+    font-size: clamp(1rem, 2vw, 1.1rem);
     line-height: 1.5;
   }
 
-  .empty {
-    max-width: 720px;
-    margin: 0 auto;
+  .hero .back,
+  .hero .brand,
+  .hero h1,
+  .hero .lede {
+    animation: enter-soft 200ms ease both;
   }
 
-  .grid {
+  .hero .brand {
+    animation-delay: 40ms;
+  }
+
+  .hero h1 {
+    animation-delay: 70ms;
+  }
+
+  .hero .lede {
+    animation-delay: 110ms;
+  }
+
+  .empty {
+    max-width: 42rem;
+    margin: 0 auto;
+    animation: enter-soft 200ms ease both;
+  }
+
+  .empty p {
+    margin: 0 0 1rem;
+    color: var(--color-text-secondary);
+    font-family: var(--font-editorial);
+    font-size: clamp(1.25rem, 3vw, 1.5rem);
+    line-height: 1.45;
+  }
+
+  .empty-home {
+    color: var(--color-primary);
+    font-size: 0.95rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .spread {
     list-style: none;
-    max-width: 720px;
+    max-width: 42rem;
     margin: 0 auto;
     padding: 0;
-    display: grid;
-    gap: 0.85rem;
+    display: flex;
+    flex-direction: column;
   }
 
-  .card {
+  .spread-item {
+    animation: enter-soft 200ms ease both;
+    animation-delay: calc(140ms + var(--stagger, 0) * 50ms);
+  }
+
+  .spread-link {
     display: grid;
-    gap: 0.45rem;
-    padding: 1.15rem 1.2rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.85rem 1rem;
+    align-items: start;
+    padding: 1.35rem 0.15rem;
+    border-top: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
     color: inherit;
     text-decoration: none;
   }
 
-  .card h2 {
-    margin: 0;
+  .spread-item:last-child .spread-link {
+    border-bottom: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  }
+
+  .spread-mark {
+    margin-top: 0.35rem;
+    color: var(--color-ornament, var(--color-brand-mark));
     font-family: var(--font-editorial);
-    font-size: clamp(1.35rem, 3vw, 1.75rem);
+    font-size: 1.15rem;
+    line-height: 1;
+    transition: transform 200ms ease;
+  }
+
+  .spread-body {
+    display: grid;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .spread-title {
+    display: block;
+    font-family: var(--font-editorial);
+    font-size: clamp(1.55rem, 3.6vw, 2rem);
     font-weight: 400;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+    transition:
+      transform 200ms ease,
+      opacity 200ms ease;
   }
 
-  .card p {
-    margin: 0;
+  .spread-desc {
+    display: -webkit-box;
+    overflow: hidden;
     color: var(--color-text-secondary);
+    font-size: 0.98rem;
     line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
-  .count {
-    color: var(--color-primary);
-    font-size: 0.85rem;
-    font-weight: 700;
+  .spread-count {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .spread-link:hover .spread-title,
+    .spread-link:focus-visible .spread-title {
+      opacity: 0.88;
+      transform: translateX(4px);
+    }
+
+    .spread-link:hover .spread-mark,
+    .spread-link:focus-visible .spread-mark {
+      transform: translateX(2px);
+    }
+  }
+
+  .spread-link:active .spread-title {
+    opacity: 0.82;
+    transform: translateX(3px);
+  }
+
+  .spread-link:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+
+  @keyframes enter-soft {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero .back,
+    .hero .brand,
+    .hero h1,
+    .hero .lede,
+    .empty,
+    .spread-item {
+      animation: none;
+    }
+
+    .spread-title,
+    .spread-mark {
+      transition: none;
+    }
   }
 </style>

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pickDescription, pickTitle } from "./lib/natural-titles.mjs";
 
 const perTopic = 50;
 
@@ -33,16 +34,6 @@ const kinds = [
   "cute",
   "tip"
 ];
-
-const kindLead = {
-  quote: "Châm ngôn",
-  story: "Câu chuyện",
-  fact: "Kiến thức",
-  insight: "Góc nhìn",
-  psychology: "Tâm lý",
-  cute: "Điều dễ thương",
-  tip: "Mẹo"
-};
 
 if (process.argv.includes("--remote")) {
   console.error("Tu choi: chi ghi vao D1 local.");
@@ -146,8 +137,8 @@ function buildPosts(oldestDemoAt) {
       const kind = kinds[(serial - 1) % kinds.length];
       const mood = moods[(serial - 1) % moods.length];
       const id = `demo${String(serial).padStart(4, "0")}`;
-      const title = `${kindLead[kind]} ${index}: ${topic.label} cho một ngày ${mood.label}.`;
-      const description = `Bài demo ${serial} để thử lọc ${topic.label} và tâm trạng ${mood.label}.`;
+      const title = pickTitle(topic.theme, serial - 1);
+      const description = pickDescription(title, topic.theme);
       const at = oldestDemoAt - serial;
 
       posts.push({
