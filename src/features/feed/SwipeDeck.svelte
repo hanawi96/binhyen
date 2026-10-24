@@ -483,12 +483,110 @@
     return result;
   }
 
-  function toggleReaction(kind: "like" | "save") {
+  const HEART_SVG =
+    '<svg viewBox="0 0 16 16" width="100%" height="100%" aria-hidden="true"><path fill="currentColor" d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z"/></svg>';
+
+  /** Tim bay (WAAPI). reduce-motion: vẫn hiện nhưng nhịp ngắn, bay ít. */
+  function burstHearts(origin?: { x: number; y: number }) {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    const reduceMotion = window
+      .matchMedia("(prefers-reduced-motion: reduce)")
+      .matches;
+    const x = origin?.x ?? window.innerWidth / 2;
+    const y = origin?.y ?? window.innerHeight * 0.38;
+    const count = reduceMotion ? 4 : 7;
+    const duration = reduceMotion ? 520 : 1000;
+    const rise = reduceMotion ? -36 : -110;
+
+    const layer = document.createElement("div");
+    layer.setAttribute("aria-hidden", "true");
+    Object.assign(layer.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      pointerEvents: "none",
+      overflow: "visible"
+    });
+    document.body.appendChild(layer);
+
+    for (let i = 0; i < count; i += 1) {
+      const heart = document.createElement("span");
+      heart.innerHTML = HEART_SVG;
+      const dx = (Math.random() - 0.5) * (reduceMotion ? 40 : 96);
+      const scale = 0.55 + Math.random() * 0.7;
+      const jx = (Math.random() - 0.5) * 16;
+      const jy = (Math.random() - 0.5) * 10;
+      Object.assign(heart.style, {
+        position: "fixed",
+        left: `${x + jx}px`,
+        top: `${y + jy}px`,
+        width: "28px",
+        height: "28px",
+        margin: "-14px 0 0 -14px",
+        color: "#e85d6c",
+        willChange: "transform, opacity",
+        display: "block",
+        zIndex: "2147483647"
+      });
+      layer.appendChild(heart);
+
+      if (typeof heart.animate === "function") {
+        heart.animate(
+          [
+            {
+              opacity: 0,
+              transform: `translate(0px, 4px) scale(${scale * 0.4})`
+            },
+            {
+              opacity: 1,
+              transform: `translate(${dx * 0.2}px, ${rise * 0.35}px) scale(${scale})`,
+              offset: 0.2
+            },
+            {
+              opacity: 0,
+              transform: `translate(${dx}px, ${rise}px) scale(${scale * 0.9})`
+            }
+          ],
+          {
+            duration,
+            delay: i * (reduceMotion ? 30 : 48),
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            fill: "forwards"
+          }
+        );
+      } else {
+        heart.style.opacity = "1";
+      }
+    }
+
+    window.setTimeout(() => {
+      layer.remove();
+    }, duration + count * 50 + 80);
+  }
+
+  function toggleReaction(kind: "like" | "save", event?: MouseEvent) {
     const item = activeItem;
     if (!item) return;
 
     const before = reactions[item.id];
     const on = kind === "like" ? !before?.liked : !before?.saved;
+    if (kind === "like" && on) {
+      const target = event?.currentTarget;
+      if (target instanceof HTMLElement) {
+        const box = target.getBoundingClientRect();
+        burstHearts({
+          x: box.left + box.width / 2,
+          y: box.top + box.height / 2
+        });
+      } else {
+        burstHearts(
+          event ? { x: event.clientX, y: event.clientY } : undefined
+        );
+      }
+    }
     void setReaction(item.id, kind, on);
   }
 
@@ -2563,7 +2661,7 @@
             class:active={railView?.liked ?? false}
             aria-label="Yêu thích"
             aria-pressed={railView?.liked ?? false}
-            onclick={() => toggleReaction("like")}
+            onclick={(event) => toggleReaction("like", event)}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
@@ -2623,7 +2721,7 @@
             class:active={railView?.liked ?? false}
             aria-label="Yêu thích"
             aria-pressed={railView?.liked ?? false}
-            onclick={() => toggleReaction("like")}
+            onclick={(event) => toggleReaction("like", event)}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
