@@ -162,18 +162,17 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: auto;
+    height: auto;
     padding: 0;
-    border: 1px solid var(--color-line);
-    border-radius: 50%;
-    background: var(--color-glass);
+    border: 0;
+    background: transparent;
     color: var(--color-primary);
+    line-height: 0;
   }
 
   .ambient-toggle.on {
-    border-color: var(--color-primary);
-    background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
   }
 
   .ambient-toggle.off {
@@ -181,8 +180,8 @@
   }
 
   .ambient-toggle svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
   }
 
   .mute-slash {

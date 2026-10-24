@@ -160,6 +160,7 @@
   let animating = $state(false);
   let reading = $state(false);
   let readerShown = $state(false);
+  let readerDismissing = $state(false);
   let articleBlocks = $state<ArticleBlock[]>([]);
   /** Chi render body khi khop dung bai dang mo — tranh flash noi dung cu. */
   let articleForId = $state<string | null>(null);
@@ -1556,6 +1557,7 @@
     clearArticleBody();
     readItem = item;
     readFromMine = fromMine;
+    readerDismissing = false;
     reading = true;
     readerShown = false;
 
@@ -1610,34 +1612,94 @@
       });
   }
 
+  /* Cùng nhịp với reader-dock: 12px + opacity, 200ms ease. */
+  const READ_SHIFT_PX = 12;
+  const READ_DISMISS_MS = 200;
+
+  function finishCloseReading() {
+    reading = false;
+    readItem = null;
+    readFromMine = false;
+    readerDismissing = false;
+    clearArticleBody();
+  }
+
   function closeReading() {
-    if (!reading) return;
+    if (!reading || readerDismissing) return;
 
     readerShown = false;
     readSerial += 1;
-    // Xoa body ngay khi bat dau dong — khong giu chu cu trong DOM luc fade.
-    clearArticleBody();
+    // Giữ nội dung trong lúc fade-out — clear sớm sẽ lộ title + "Đang mở bài…".
     window.clearTimeout(closeTimer);
     window.clearTimeout(readerShowTimer);
-    closeTimer = window.setTimeout(() => {
-      reading = false;
-      readItem = null;
-      readFromMine = false;
-      clearArticleBody();
-    }, 200);
+    closeTimer = window.setTimeout(finishCloseReading, READ_DISMISS_MS);
   }
 
-  function setReadDragX(node: HTMLElement, value: number) {
-    node.style.setProperty("--read-drag-x", `${value}px`);
+  function readSwipeRoot(node: HTMLElement) {
+    return node.closest(".swipe-deck") as HTMLElement | null;
+  }
+
+  function setReadDragVisual(
+    node: HTMLElement,
+    x: number,
+    opacity: number | null = null
+  ) {
+    node.style.setProperty("--read-drag-x", `${x}px`);
+    const root = readSwipeRoot(node);
+    if (opacity === null) {
+      node.style.removeProperty("--read-drag-opacity");
+      root?.style.removeProperty("--read-drag-opacity");
+      return;
+    }
+    const value = String(opacity);
+    node.style.setProperty("--read-drag-opacity", value);
+    root?.style.setProperty("--read-drag-opacity", value);
+  }
+
+  function clearReadDragVisual(node: HTMLElement) {
+    node.style.removeProperty("--read-drag-x");
+    node.style.removeProperty("--read-drag-opacity");
+    readSwipeRoot(node)?.style.removeProperty("--read-drag-opacity");
+  }
+
+  /** Vuốt phải đóng: thêm 12px theo chiều vuốt + mờ (cùng kiểu dock). */
+  function dismissReadingSwipe(node: HTMLElement, fromX: number) {
+    if (!reading || readerDismissing) return;
+
+    readSerial += 1;
+    window.clearTimeout(closeTimer);
+    window.clearTimeout(readerShowTimer);
+
+    const width = node.clientWidth || 320;
+    const progress = Math.min(fromX / width, 1);
+    const startOpacity = 1 - progress * 0.65;
+    const targetX = fromX + READ_SHIFT_PX;
+
+    node.classList.remove("is-swiping");
+    readerDismissing = true;
+    // Header/dock về theo nhịp; bài vẫn hiện nhờ readerDismissing.
+    readerShown = false;
+    setReadDragVisual(node, fromX, startOpacity);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setReadDragVisual(node, targetX, 0);
+      });
+    });
+
+    closeTimer = window.setTimeout(() => {
+      finishCloseReading();
+      clearReadDragVisual(node);
+    }, READ_DISMISS_MS);
   }
 
   function readNext() {
-    if (!canNext || animating || readFromMine) return;
+    if (!canNext || animating || readFromMine || readerDismissing) return;
 
     const nextIndex = currentIndex + 1;
     readerShown = false;
     readSerial += 1;
-    clearArticleBody();
+    // Giữ nội dung trong lúc fade — tránh ghost "Đang mở bài…" khi chuyển bài.
     window.clearTimeout(closeTimer);
     window.clearTimeout(readerShowTimer);
     closeTimer = window.setTimeout(() => {
@@ -1654,7 +1716,7 @@
       ) {
         void loadMore();
       }
-    }, 200);
+    }, READ_DISMISS_MS);
   }
 
   function readGestures(node: HTMLElement) {
@@ -1666,25 +1728,39 @@
     let axis: "none" | "x" | "y" = "none";
     let frame = 0;
     let queuedX = 0;
+    let queuedOpacity = 1;
 
-    function paintX(value: number) {
-      queuedX = value;
+    function dragOpacity(x: number, width: number) {
+      const progress = Math.min(Math.max(x, 0) / width, 1);
+      return 1 - progress * 0.65;
+    }
+
+    function paintDrag(x: number, opacity: number) {
+      queuedX = x;
+      queuedOpacity = opacity;
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        setReadDragX(node, queuedX);
+        setReadDragVisual(node, queuedX, queuedOpacity);
       });
     }
 
     function clearPointer() {
       pointerId = -1;
       axis = "none";
-      lastX = 0;
       node.classList.remove("is-swiping");
       if (frame) {
         cancelAnimationFrame(frame);
         frame = 0;
       }
+    }
+
+    function springBack(fromX: number) {
+      const width = node.clientWidth || 320;
+      setReadDragVisual(node, fromX, dragOpacity(fromX, width));
+      requestAnimationFrame(() => {
+        setReadDragVisual(node, 0, 1);
+      });
     }
 
     function onWheel(event: WheelEvent) {
@@ -1697,6 +1773,7 @@
     function onPointerDown(event: PointerEvent) {
       if (!event.isPrimary || reading === false) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (node.classList.contains("is-dismissing")) return;
 
       const target = event.target;
       if (
@@ -1712,7 +1789,7 @@
       startTime = performance.now();
       lastX = 0;
       axis = "none";
-      setReadDragX(node, 0);
+      setReadDragVisual(node, 0, 1);
     }
 
     function onPointerMove(event: PointerEvent) {
@@ -1745,8 +1822,8 @@
 
       event.preventDefault();
       const width = node.clientWidth || 320;
-      lastX = Math.max(0, Math.min(width * 0.45, dx));
-      paintX(lastX);
+      lastX = Math.max(0, Math.min(width * 0.9, dx));
+      paintDrag(lastX, dragOpacity(lastX, width));
     }
 
     function onPointerUp(event: PointerEvent) {
@@ -1760,19 +1837,23 @@
     function finishPointer(event: PointerEvent, cancelled: boolean) {
       if (event.pointerId !== pointerId) return;
 
-      const dx = cancelled ? lastX : Math.max(0, event.clientX - startX);
+      const releaseX = lastX;
+      const dx = cancelled ? releaseX : Math.max(0, event.clientX - startX);
       const elapsed = Math.max(performance.now() - startTime, 1);
       const velocity = dx / elapsed;
       const wasX = axis === "x";
+      const fromX = Math.max(releaseX, dx);
 
       if (node.hasPointerCapture(event.pointerId)) {
         node.releasePointerCapture(event.pointerId);
       }
 
       clearPointer();
+      lastX = 0;
 
       if (!wasX || cancelled) {
-        setReadDragX(node, 0);
+        if (wasX) springBack(fromX);
+        else setReadDragVisual(node, 0, 1);
         return;
       }
 
@@ -1781,13 +1862,11 @@
         (dx >= MIN_FAST_DISTANCE && velocity >= FAST_VELOCITY);
 
       if (shouldClose) {
-        setReadDragX(node, 0);
-        closeReading();
+        dismissReadingSwipe(node, fromX);
         return;
       }
 
-      setReadDragX(node, dx);
-      requestAnimationFrame(() => setReadDragX(node, 0));
+      springBack(fromX);
     }
 
     node.addEventListener("wheel", onWheel, { passive: false });
@@ -1799,6 +1878,7 @@
     return {
       destroy() {
         if (frame) cancelAnimationFrame(frame);
+        clearReadDragVisual(node);
         node.removeEventListener("wheel", onWheel);
         node.removeEventListener("pointerdown", onPointerDown);
         node.removeEventListener("pointermove", onPointerMove);
@@ -2033,9 +2113,10 @@
       setOffset(0);
 
       if (shouldOpen) {
+        // Reader vào từ phải (cùng nhịp dock); reset kéo dưới lớp đọc.
+        openReading();
         queuedDragX = 0;
         setDragX(0);
-        openReading();
         return;
       }
 
@@ -2242,7 +2323,11 @@
   });
 </script>
 
-<div class="swipe-deck" class:is-reading={reading}>
+<div
+  class="swipe-deck"
+  class:is-reading={reading}
+  class:is-reader-shown={readerShown}
+>
   <header class="topbar" inert={reading || sheetOpen}>
     {#if collection}
       <div class="collection-bar">
@@ -2433,8 +2518,8 @@
     </span>
   {/snippet}
 
-  {#if activeItem && !reading}
-    <div class="read-rail" inert={sheetOpen}>
+  {#if activeItem}
+    <div class="read-rail" inert={reading || sheetOpen}>
       <div class="rail-item">
         <button
           type="button"
@@ -2563,7 +2648,8 @@
     </div>
     <article
       class="reader"
-      class:shown={readerShown}
+      class:shown={readerShown || readerDismissing}
+      class:is-dismissing={readerDismissing}
       use:readGestures
       aria-labelledby={`read-title-${item.id}`}
     >
@@ -3250,6 +3336,8 @@
   }
 
   .topbar {
+    position: relative;
+    z-index: 6;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -3416,28 +3504,26 @@
   }
 
   .dock {
-    display: grid;
-    grid-template-columns: 1fr 84px 64px 84px 1fr;
+    display: flex;
     align-items: center;
-    justify-items: center;
+    justify-content: center;
+    gap: 10px;
   }
 
   .dock .dock-item {
     display: flex;
+    flex: 0 0 auto;
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    padding: 4px 0;
+    min-width: 64px;
+    padding: 4px 2px;
     border: 0;
     background: transparent;
     color: var(--color-quiet);
     font-size: 10px;
     letter-spacing: 0.02em;
     white-space: nowrap;
-  }
-
-  .dock-item:nth-child(1) {
-    grid-column: 2;
   }
 
   .dock-icon {
@@ -3457,26 +3543,18 @@
   }
 
   .dock-write {
-    grid-column: 3;
     display: grid;
+    flex: 0 0 auto;
     place-items: center;
     width: 54px;
     height: 54px;
+    margin: 0 4px;
     padding: 0;
     border: 0;
     border-radius: 50%;
     background: var(--color-primary);
     color: var(--color-surface);
     box-shadow: 0 8px 22px color-mix(in srgb, var(--color-primary) 32%, transparent);
-  }
-
-  .dock-item:nth-child(3) {
-    grid-column: 4;
-  }
-
-  .dock-account {
-    grid-column: 5;
-    justify-self: end;
   }
 
   .dock-account .dock-avatar {
@@ -3553,12 +3631,17 @@
     }
 
     .dock {
-      grid-template-columns: 1fr 72px 58px 72px 1fr;
+      gap: 6px;
+    }
+
+    .dock .dock-item {
+      min-width: 58px;
     }
 
     .dock-write {
       width: 50px;
       height: 50px;
+      margin: 0 2px;
     }
   }
 
@@ -3592,8 +3675,12 @@
   }
 
   .topbar,
-  .bottom {
-    transition: opacity 200ms ease !important;
+  .bottom,
+  .read-rail {
+    /* Cùng nhịp reader-dock: opacity + dịch 12px, 200ms ease. */
+    transition:
+      opacity 200ms ease,
+      transform 200ms ease !important;
   }
 
   .deck-viewport {
@@ -3602,10 +3689,22 @@
       transform 200ms ease !important;
   }
 
-  .swipe-deck.is-reading .topbar,
-  .swipe-deck.is-reading .bottom {
+  /* Mở bài: chrome feed ẩn theo hướng “ra ngoài”; đóng thì ngược lại. */
+  .swipe-deck.is-reader-shown .topbar {
     opacity: 0;
-    visibility: hidden;
+    transform: translate3d(0, -12px, 0);
+    pointer-events: none;
+  }
+
+  .swipe-deck.is-reader-shown .bottom {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+    pointer-events: none;
+  }
+
+  .swipe-deck.is-reader-shown .read-rail {
+    opacity: 0;
+    transform: translate3d(12px, -50%, 0);
     pointer-events: none;
   }
 
@@ -3617,30 +3716,49 @@
   }
 
   .reader {
+    --read-shift-x: 12px;
+    /* Chừa chỗ cho reader-dock — chữ không chạy vào vùng nút. */
+    --reader-dock-space: calc(58px + env(safe-area-inset-bottom, 0px));
     position: absolute;
     inset: 0;
     z-index: 4;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-sizing: border-box;
+    padding-bottom: var(--reader-dock-space);
     /* Trong suốt — nền gradient explore-page xuyên suốt, không dải header/footer. */
     background: transparent;
+    /* Mở: vào từ phải (vuốt trái). Đóng: ra phải (vuốt phải) — cùng kiểu dock. */
     opacity: 0;
-    transform: translate3d(var(--read-drag-x, 0px), 18px, 0);
+    transform: translate3d(
+      calc(var(--read-shift-x) + var(--read-drag-x, 0px)),
+      0,
+      0
+    );
     transition:
-      opacity 220ms ease,
-      transform 220ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+      opacity 200ms ease,
+      transform 200ms ease !important;
     container-type: inline-size;
     touch-action: pan-y;
+    will-change: transform, opacity;
   }
 
   .reader.shown {
-    opacity: 1;
+    --read-shift-x: 0px;
+    opacity: var(--read-drag-opacity, 1);
     transform: translate3d(var(--read-drag-x, 0px), 0, 0);
   }
 
   .reader.is-swiping {
     transition: none !important;
+  }
+
+  .reader.is-dismissing {
+    --read-shift-x: 0px;
+    pointer-events: none;
+    opacity: var(--read-drag-opacity, 1);
+    transform: translate3d(var(--read-drag-x, 0px), 0, 0);
   }
 
   .reader-dock {
@@ -3664,9 +3782,18 @@
   }
 
   .reader-dock.shown {
-    opacity: 1;
+    opacity: var(--read-drag-opacity, 1);
     transform: translateY(0);
     pointer-events: auto;
+  }
+
+  .swipe-deck:has(.reader.is-swiping) .reader-dock,
+  .swipe-deck:has(.reader.is-dismissing) .reader-dock {
+    transition: opacity 160ms linear !important;
+  }
+
+  .swipe-deck:has(.reader.is-dismissing) .reader-dock {
+    pointer-events: none !important;
   }
 
   .reader-dock-react,
@@ -3695,7 +3822,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    transform: translateY(-50%);
+    transform: translate3d(0, -50%, 0);
   }
 
   .rail-item {
@@ -3834,7 +3961,7 @@
     min-height: 0;
     overflow: auto;
     padding-top: max(28px, calc(env(safe-area-inset-top, 0px) + 16px));
-    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 20px;
   }
 
   .reader-column {
@@ -3844,7 +3971,7 @@
   }
 
   .reader-scroll .reader-column {
-    padding-bottom: 32px;
+    padding-bottom: 12px;
   }
 
   .reader-column.body-ready :is(h3, .reader-graph, .reader-end) {
@@ -3920,6 +4047,10 @@
   }
 
   @media (max-width: 640px) {
+    .reader {
+      --reader-dock-space: calc(54px + env(safe-area-inset-bottom, 0px));
+    }
+
     .reader-dock {
       padding: 8px 14px max(10px, calc(env(safe-area-inset-bottom) + 6px));
       gap: 12px;
@@ -3932,7 +4063,7 @@
 
     .reader-scroll {
       padding-top: max(20px, calc(env(safe-area-inset-top, 0px) + 12px));
-      padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: 16px;
     }
 
     .read-rail {

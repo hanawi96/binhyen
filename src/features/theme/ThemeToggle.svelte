@@ -47,19 +47,19 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: auto;
+    height: auto;
     padding: 0;
-    border: 1px solid var(--color-line);
-    border-radius: 50%;
-    background: var(--color-glass);
+    border: 0;
+    background: transparent;
     color: var(--color-primary);
+    line-height: 0;
   }
 
   .moon,
   .sun {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
   }
 
   .sun {
