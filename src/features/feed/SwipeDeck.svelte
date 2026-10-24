@@ -7,6 +7,7 @@
   import {
     atmosphereStyle,
     buildAtmosphereMap,
+    getAtmospherePreset,
     pickAtmosphereId,
     type AtmosphereMode
   } from "./atmosphere-presets";
@@ -318,11 +319,31 @@
     return atmosphereMap.get(id) ?? pickAtmosphereId(id, -1);
   });
 
-  /** Sáng/tối: cùng bố cục, chỉ đổi bộ màu preset. */
   let atmosphereMode = $state<AtmosphereMode>("light");
+  /**
+   * Chưa hydrate: không gắn inline --atm-* (dùng --atm-boot-* từ <head>).
+   * Tránh SSR/hydrate mặc định light đè lên màu tối đúng của bài.
+   */
+  let atmosphereHydrated = $state(false);
+  /** Bật morph sau khi đã gắn đúng màu — tránh animate từ màu sai. */
+  let atmospherePaintReady = $state(false);
   const atmosphereCss = $derived(
-    atmosphereStyle(atmosphereId, atmosphereMode)
+    atmosphereHydrated
+      ? atmosphereStyle(atmosphereId, atmosphereMode)
+      : ""
   );
+
+  /** Đồng bộ --atm-boot-* với thẻ đang xem (khớp AtmosphereBoot ở bài đầu). */
+  $effect(() => {
+    if (typeof document === "undefined" || !atmosphereHydrated) return;
+    const preset = getAtmospherePreset(atmosphereId);
+    const colors =
+      atmosphereMode === "dark" ? preset.dark : preset.light;
+    const root = document.documentElement;
+    root.style.setProperty("--atm-boot-wash", colors.wash);
+    root.style.setProperty("--atm-boot-a", colors.a);
+    root.style.setProperty("--atm-boot-b", colors.b);
+  });
 
   // So tren rail: giu so cu khi doi the / dang tai, roi truot sang so moi.
   type RailStats = {
@@ -2254,12 +2275,19 @@
     // May chu khong doc duoc nguoi dung thi hoi lai, sau khi the dau da hien.
     const meTimer = userKnown ? 0 : window.setTimeout(ensureMe, 1200);
     atmosphereMode = readTheme();
+    atmosphereHydrated = true;
     const themeObserver = new MutationObserver(() => {
       atmosphereMode = readTheme();
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"]
+    });
+    // Đợi 1 frame có inline đúng màu, rồi mới bật transition morph.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        atmospherePaintReady = true;
+      });
     });
     document.addEventListener("keydown", handleEscape);
     window.addEventListener("popstate", handlePopState);
@@ -2310,8 +2338,9 @@
   <div
     class="atmosphere"
     class:is-deep={reading}
+    class:is-paint-ready={atmospherePaintReady}
     data-atm={atmosphereId}
-    style={atmosphereCss}
+    style={atmosphereCss || undefined}
     aria-hidden="true"
   >
     <div class="atmosphere-orb atmosphere-orb--a"></div>

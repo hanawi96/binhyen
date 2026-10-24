@@ -11,6 +11,7 @@ import { attachViewerReactions } from "../../features/feed/feed-rows";
 import { loadCollectionFeed } from "../../features/feed/load-collection-feed";
 import { createD1MyPostStore } from "../../features/posts/d1-my-posts";
 import BaseLayout from "../../layouts/BaseLayout.astro";
+import AtmosphereBoot from "../../features/feed/AtmosphereBoot.astro";
 import ExploreFeed from "../../features/feed/ExploreFeed.svelte";
 
 const slug = Astro.params.slug ?? "";
@@ -72,6 +73,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
   title={`${collectionMeta.title} · Bình Yên`}
   description={collectionMeta.description || collectionMeta.title}
 >
+  <AtmosphereBoot slot="head" contentId={initialItems[0]?.id ?? null} />
   <ExploreFeed
     client:load
     initialItems={initialItems}

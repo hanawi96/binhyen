@@ -23,6 +23,8 @@ export const GET: APIRoute = async () => {
         slug: item.slug,
         title: item.title,
         description: item.description,
+        coverUrl: item.coverUrl,
+        coverAlt: item.coverAlt,
         itemCount: item.itemCount,
         sortOrder: item.sortOrder
       }))

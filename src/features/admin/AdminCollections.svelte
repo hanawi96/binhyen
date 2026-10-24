@@ -19,7 +19,7 @@
     kind: string;
   }
 
-  type View = "grid" | "detail" | "create";
+  type View = "grid" | "detail";
 
   let { initialCollections, pending }: Props = $props();
 
@@ -30,9 +30,14 @@
   let title = $state("");
   let slug = $state("");
   let description = $state("");
+  let coverUrl = $state("");
+  let coverAlt = $state("");
   let status = $state<CollectionStatus>("draft");
   let sortOrder = $state(0);
   let slugTouched = $state(false);
+  let coverUploading = $state(false);
+  let coverFileInput = $state<HTMLInputElement | null>(null);
+  let createCoverInput = $state<HTMLInputElement | null>(null);
 
   let busy = $state(false);
   let itemsSaving = $state(false);
@@ -41,6 +46,13 @@
   let persistChain: Promise<void> = Promise.resolve();
   let pendingItemIds: string[] | null = null;
   let persistInFlight = 0;
+
+  /** Modal tao bo moi */
+  let createOpen = $state(false);
+  let createDialog = $state<HTMLDialogElement | null>(null);
+  let createNotice = $state<{ tone: "ok" | "error"; text: string } | null>(
+    null
+  );
 
   /** Modal them bai */
   let addOpen = $state(false);
@@ -83,6 +95,8 @@
       slug: row.slug,
       title: row.title,
       description: row.description,
+      coverUrl: row.coverUrl ?? "",
+      coverAlt: row.coverAlt ?? "",
       status: row.status,
       sortOrder: row.sortOrder,
       itemCount: row.itemCount,
@@ -103,20 +117,80 @@
     notice = null;
   }
 
-  function startCreate() {
-    view = "create";
-    detail = null;
+  function resetMetaForm() {
     title = "";
     slug = "";
     description = "";
+    coverUrl = "";
+    coverAlt = "";
     status = "draft";
     sortOrder = collections.length;
     slugTouched = false;
+  }
+
+  function startCreate() {
+    if (busy || createOpen) return;
+    resetMetaForm();
+    createNotice = null;
     notice = null;
+    createOpen = true;
+    queueMicrotask(() => createDialog?.showModal());
+  }
+
+  function closeCreateModal() {
+    createDialog?.close();
+    createOpen = false;
+    createNotice = null;
   }
 
   function onTitleInput() {
     if (!slugTouched) slug = slugFromTitle(title || "bo");
+  }
+
+  function flashNotice(tone: "ok" | "error", text: string) {
+    if (createOpen) createNotice = { tone, text };
+    else notice = { tone, text };
+  }
+
+  async function uploadCover(file: File) {
+    if (coverUploading || busy) return;
+    coverUploading = true;
+    if (createOpen) createNotice = null;
+    else notice = null;
+    try {
+      const payload = new FormData();
+      payload.append("file", file);
+      payload.append("kind", "image");
+      const response = await fetch("/api/admin/media", {
+        method: "POST",
+        body: payload
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success || typeof body.url !== "string") {
+        flashNotice("error", body?.error ?? "Không tải được ảnh bìa.");
+        return;
+      }
+      coverUrl = body.url;
+      if (!coverAlt.trim()) coverAlt = title.trim() || "Ảnh bìa bộ sưu tập";
+      flashNotice("ok", "Đã tải ảnh bìa lên kho media.");
+    } catch {
+      flashNotice("error", "Không có kết nối khi tải ảnh.");
+    } finally {
+      coverUploading = false;
+    }
+  }
+
+  function onCoverPicked(event: Event) {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement) || !input.files?.[0]) return;
+    const file = input.files[0];
+    input.value = "";
+    void uploadCover(file);
+  }
+
+  function clearCover() {
+    coverUrl = "";
+    coverAlt = "";
   }
 
   async function fetchCollection(id: string): Promise<CollectionDetail | null> {
@@ -141,6 +215,8 @@
       title = row.title;
       slug = row.slug;
       description = row.description;
+      coverUrl = row.coverUrl ?? "";
+      coverAlt = row.coverAlt ?? "";
       status = row.status;
       sortOrder = row.sortOrder;
       slugTouched = true;
@@ -156,20 +232,24 @@
   async function saveMeta() {
     if (busy) return;
     if (!title.trim()) {
-      notice = { tone: "error", text: "Nhập tên bộ." };
+      flashNotice("error", "Nhập tên bộ.");
       return;
     }
 
     busy = true;
-    notice = null;
+    if (createOpen) createNotice = null;
+    else notice = null;
+
     const payload = {
       title: title.trim(),
       slug: slug.trim(),
       description: description.trim(),
+      coverUrl: coverUrl.trim(),
+      coverAlt: coverAlt.trim(),
       status,
       sortOrder
     };
-    const creating = view === "create";
+    const creating = createOpen;
 
     try {
       const response = await fetch(
@@ -184,24 +264,26 @@
       );
       const body = await response.json();
       if (!response.ok || !body?.success || !body.collection) {
-        notice = {
-          tone: "error",
-          text: body?.error ?? "Không lưu được."
-        };
+        flashNotice("error", body?.error ?? "Không lưu được.");
         return;
       }
 
       const row = body.collection as CollectionDetail;
-      detail = row;
-      view = "detail";
-      slugTouched = true;
       upsertList(row);
-      notice = {
-        tone: "ok",
-        text: creating ? "Đã tạo bộ." : "Đã lưu bộ."
-      };
+      slugTouched = true;
+
+      if (creating) {
+        closeCreateModal();
+        view = "grid";
+        detail = null;
+        notice = { tone: "ok", text: "Đã tạo bộ sưu tập." };
+      } else {
+        detail = row;
+        view = "detail";
+        notice = { tone: "ok", text: "Đã lưu bộ." };
+      }
     } catch {
-      notice = { tone: "error", text: "Không có kết nối." };
+      flashNotice("error", "Không có kết nối.");
     } finally {
       busy = false;
     }
@@ -485,12 +567,6 @@
           <p class="eyebrow">Biên tập</p>
           <h1>Bộ sưu tập</h1>
           <p>Chọn bộ để xem chi tiết, hoặc bấm + để thêm bài nhanh.</p>
-        {:else if view === "create"}
-          <button type="button" class="back-link" onclick={goGrid}>
-            ← Danh mục
-          </button>
-          <h1>Tạo bộ mới</h1>
-          <p>Đặt tên và lời mở đầu — gắn bài sau bằng nút + trên thẻ.</p>
         {:else}
           <button type="button" class="back-link" onclick={goGrid}>
             ← Danh mục
@@ -502,7 +578,12 @@
       <div class="head-actions">
         {#if view === "grid"}
           <span class="count-pill">{collections.length} bộ</span>
-          <button type="button" class="btn soft" onclick={startCreate} disabled={busy}>
+          <button
+            type="button"
+            class="btn soft"
+            onclick={startCreate}
+            disabled={busy || createOpen}
+          >
             + Bộ mới
           </button>
         {/if}
@@ -526,7 +607,12 @@
           <span class="empty-mark" aria-hidden="true">✳</span>
           <p>Chưa có bộ nào</p>
           <span>Tạo bộ đầu tiên để bắt đầu tuyển tập.</span>
-          <button type="button" class="btn primary" onclick={startCreate}>
+          <button
+            type="button"
+            class="btn primary"
+            onclick={startCreate}
+            disabled={busy || createOpen}
+          >
             Tạo bộ mới
           </button>
         </div>
@@ -552,6 +638,20 @@
                   >
                     <span aria-hidden="true">+</span>
                   </button>
+                </div>
+
+                <div class="card-cover" class:is-placeholder={!item.coverUrl}>
+                  {#if item.coverUrl}
+                    <img
+                      src={item.coverUrl}
+                      alt={item.coverAlt || item.title}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  {:else}
+                    <span class="card-cover-mark" aria-hidden="true">❋</span>
+                    <span class="card-cover-label">Chưa có ảnh bìa</span>
+                  {/if}
                 </div>
 
                 <h2>{item.title}</h2>
@@ -618,6 +718,71 @@
             ></textarea>
           </label>
 
+          <div class="field wide cover-field">
+            <span>Ảnh bìa</span>
+            <div class="cover-row">
+              <div class="cover-preview" class:empty={!coverUrl}>
+                {#if coverUrl}
+                  <img
+                    src={coverUrl}
+                    alt={coverAlt || title || "Ảnh bìa"}
+                  />
+                {:else}
+                  <span>Chưa có ảnh</span>
+                {/if}
+              </div>
+              <div class="cover-controls">
+                <input
+                  bind:this={coverFileInput}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onchange={onCoverPicked}
+                />
+                <button
+                  type="button"
+                  class="btn soft"
+                  disabled={busy || coverUploading}
+                  onclick={() => coverFileInput?.click()}
+                >
+                  {coverUploading
+                    ? "Đang tải…"
+                    : coverUrl
+                      ? "Đổi ảnh"
+                      : "Chọn ảnh"}
+                </button>
+                {#if coverUrl}
+                  <button
+                    type="button"
+                    class="btn soft"
+                    disabled={busy || coverUploading}
+                    onclick={clearCover}
+                  >
+                    Gỡ ảnh
+                  </button>
+                {/if}
+                <label class="cover-url-field">
+                  <span>Hoặc dán URL</span>
+                  <input
+                    type="url"
+                    placeholder="/api/media/image/… hoặc https://…"
+                    bind:value={coverUrl}
+                    disabled={busy || coverUploading}
+                  />
+                </label>
+                <label class="cover-url-field">
+                  <span>Chú thích ảnh</span>
+                  <input
+                    maxlength="160"
+                    placeholder="Mô tả ngắn cho ảnh bìa"
+                    bind:value={coverAlt}
+                    disabled={busy || coverUploading}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
           <label class="field">
             <span>Trạng thái</span>
             <select bind:value={status} disabled={busy}>
@@ -646,9 +811,9 @@
             onclick={() => void saveMeta()}
             disabled={busy}
           >
-            {view === "create" ? "Tạo bộ" : "Lưu bộ"}
+            Lưu bộ
           </button>
-          {#if view === "detail" && detail}
+          {#if detail}
             <button
               type="button"
               class="btn soft"
@@ -750,6 +915,190 @@
     {/if}
   </main>
 </div>
+
+<dialog
+  class="create-dialog"
+  bind:this={createDialog}
+  onclose={() => {
+    createOpen = false;
+    createNotice = null;
+  }}
+>
+  {#if createOpen}
+    <form
+      class="create-sheet"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void saveMeta();
+      }}
+    >
+      <header class="create-head">
+        <div class="create-head-copy">
+          <p class="eyebrow">Bộ sưu tập mới</p>
+          <h2>Tạo tuyển tập</h2>
+          <p class="create-lede">
+            Đặt tên, ảnh bìa và lời mở đầu — gắn bài sau bằng nút + trên thẻ.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="icon-btn create-close"
+          onclick={closeCreateModal}
+          aria-label="Đóng"
+          disabled={busy}
+        >
+          ✕
+        </button>
+      </header>
+
+      <div class="create-body">
+        <div class="create-cover-pane">
+          <button
+            type="button"
+            class="create-cover-drop"
+            class:has-image={!!coverUrl}
+            disabled={busy || coverUploading}
+            onclick={() => createCoverInput?.click()}
+          >
+            {#if coverUrl}
+              <img src={coverUrl} alt={coverAlt || title || "Ảnh bìa"} />
+              <span class="create-cover-hint">Đổi ảnh</span>
+            {:else}
+              <span class="create-cover-mark" aria-hidden="true">❀</span>
+              <strong>{coverUploading ? "Đang tải…" : "Thêm ảnh bìa"}</strong>
+              <span>JPG, PNG hoặc WebP · tối đa 2MB</span>
+            {/if}
+          </button>
+          <input
+            bind:this={createCoverInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            hidden
+            onchange={onCoverPicked}
+          />
+          {#if coverUrl}
+            <div class="create-cover-actions">
+              <button
+                type="button"
+                class="btn soft tiny"
+                disabled={busy || coverUploading}
+                onclick={() => createCoverInput?.click()}
+              >
+                Đổi ảnh
+              </button>
+              <button
+                type="button"
+                class="btn soft tiny"
+                disabled={busy || coverUploading}
+                onclick={clearCover}
+              >
+                Gỡ ảnh
+              </button>
+            </div>
+          {/if}
+        </div>
+
+        <div class="create-fields">
+          <label class="field">
+            <span>Tên bộ</span>
+            <input
+              maxlength="120"
+              placeholder="Ví dụ: 100 câu nói động lực"
+              bind:value={title}
+              oninput={onTitleInput}
+              disabled={busy}
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Đường dẫn</span>
+            <div class="slug-row">
+              <span class="slug-prefix">/c/</span>
+              <input
+                maxlength="80"
+                bind:value={slug}
+                oninput={() => (slugTouched = true)}
+                disabled={busy}
+              />
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Lời mở đầu</span>
+            <textarea
+              rows="3"
+              maxlength="400"
+              placeholder="Một câu ngắn vì sao bộ này đáng đọc…"
+              bind:value={description}
+              disabled={busy}
+            ></textarea>
+          </label>
+
+          <div class="create-meta-row">
+            <label class="field">
+              <span>Trạng thái</span>
+              <select bind:value={status} disabled={busy}>
+                <option value="draft">Nháp</option>
+                <option value="published">Xuất bản</option>
+                <option value="archived">Lưu trữ</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Thứ tự</span>
+              <input
+                type="number"
+                min="0"
+                max="1000000"
+                bind:value={sortOrder}
+                disabled={busy}
+              />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Chú thích ảnh</span>
+            <input
+              maxlength="160"
+              placeholder="Mô tả ngắn cho ảnh bìa (tuỳ chọn)"
+              bind:value={coverAlt}
+              disabled={busy || coverUploading}
+            />
+          </label>
+        </div>
+      </div>
+
+      {#if createNotice}
+        <p
+          class="create-notice"
+          class:ok={createNotice.tone === "ok"}
+          class:err={createNotice.tone === "error"}
+          role="status"
+        >
+          {createNotice.text}
+        </p>
+      {/if}
+
+      <footer class="create-foot">
+        <button
+          type="button"
+          class="btn soft"
+          onclick={closeCreateModal}
+          disabled={busy}
+        >
+          Huỷ
+        </button>
+        <button
+          type="submit"
+          class="btn primary"
+          disabled={busy || coverUploading || !title.trim()}
+        >
+          {busy ? "Đang tạo…" : "Tạo bộ"}
+        </button>
+      </footer>
+    </form>
+  {/if}
+</dialog>
 
 <dialog
   class="add-dialog"
@@ -1015,6 +1364,53 @@
     background: color-mix(in srgb, var(--color-primary) 22%, transparent);
   }
 
+  .card-cover {
+    margin: 0 -4px;
+    overflow: hidden;
+    border-radius: calc(var(--radius-md) + 2px);
+    aspect-ratio: 16 / 10;
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  }
+
+  .card-cover img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .card-cover.is-placeholder {
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 0.35rem;
+    background:
+      radial-gradient(
+        circle at 30% 25%,
+        color-mix(in srgb, var(--color-primary) 18%, transparent),
+        transparent 55%
+      ),
+      linear-gradient(
+        160deg,
+        color-mix(in srgb, var(--color-primary) 12%, transparent),
+        color-mix(in srgb, var(--color-surface-soft) 70%, transparent) 70%
+      );
+  }
+
+  .card-cover-mark {
+    color: var(--color-ornament, var(--color-brand-mark));
+    font-family: var(--font-editorial);
+    font-size: 1.55rem;
+    line-height: 1;
+  }
+
+  .card-cover-label {
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 550;
+    letter-spacing: 0.01em;
+  }
+
   .collection-card h2 {
     margin: 0;
     font-family: var(--font-editorial);
@@ -1022,6 +1418,77 @@
     font-weight: 400;
     letter-spacing: -0.02em;
     line-height: 1.25;
+  }
+
+  .cover-field > span {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    font-weight: 650;
+  }
+
+  .cover-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .cover-preview {
+    overflow: hidden;
+    aspect-ratio: 16 / 10;
+    border: 1px dashed color-mix(in srgb, var(--color-border) 90%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-surface-soft) 80%, transparent);
+  }
+
+  .cover-preview.empty {
+    display: grid;
+    place-items: center;
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+  }
+
+  .cover-preview img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .cover-controls {
+    display: grid;
+    gap: 10px;
+    justify-items: start;
+  }
+
+  .cover-url-field {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .cover-url-field span {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .cover-url-field input {
+    width: 100%;
+    min-height: 2.4rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  @media (max-width: 640px) {
+    .cover-row {
+      grid-template-columns: 1fr;
+    }
   }
 
   .card-blurb {
@@ -1412,20 +1879,215 @@
     color: #c45c5c;
   }
 
+  .create-dialog,
   .add-dialog {
-    width: min(520px, calc(100vw - 2rem));
     margin: auto;
     padding: 0;
-    border: 1px solid var(--color-border);
-    border-radius: calc(var(--radius-lg) + 2px);
+    border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent);
+    border-radius: calc(var(--radius-lg) + 4px);
     background: var(--color-surface);
     color: var(--color-text);
-    box-shadow: 0 24px 60px color-mix(in srgb, var(--color-text) 18%, transparent);
+    box-shadow: 0 28px 80px color-mix(in srgb, var(--color-text) 16%, transparent);
   }
 
+  .create-dialog {
+    width: min(760px, calc(100vw - 1.5rem));
+    max-height: min(92dvh, 900px);
+    overflow: auto;
+  }
+
+  .add-dialog {
+    width: min(520px, calc(100vw - 2rem));
+  }
+
+  .create-dialog::backdrop,
   .add-dialog::backdrop {
-    background: color-mix(in srgb, #0f1411 55%, transparent);
-    backdrop-filter: blur(2px);
+    background: color-mix(in srgb, #0f1411 52%, transparent);
+    backdrop-filter: blur(4px);
+  }
+
+  .create-sheet {
+    display: grid;
+    gap: 1.25rem;
+    padding: 1.4rem 1.5rem 1.35rem;
+  }
+
+  .create-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .create-head-copy {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+
+  .create-head h2 {
+    margin: 0;
+    font-family: var(--font-editorial);
+    font-size: clamp(1.55rem, 3vw, 1.85rem);
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+  }
+
+  .create-lede {
+    margin: 0.15rem 0 0;
+    max-width: 34rem;
+    color: var(--color-text-secondary);
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .create-close {
+    flex: none;
+  }
+
+  .create-body {
+    display: grid;
+    grid-template-columns: minmax(200px, 0.92fr) minmax(0, 1.2fr);
+    gap: 1.25rem 1.4rem;
+    align-items: start;
+  }
+
+  .create-cover-pane {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .create-cover-drop {
+    position: relative;
+    display: grid;
+    place-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    min-height: 220px;
+    padding: 1rem;
+    overflow: hidden;
+    border: 0;
+    border-radius: calc(var(--radius-lg) + 2px);
+    background:
+      linear-gradient(
+        160deg,
+        color-mix(in srgb, var(--color-primary) 10%, transparent),
+        transparent 55%
+      ),
+      color-mix(in srgb, var(--color-surface-soft) 88%, transparent);
+    color: var(--color-text-secondary);
+    text-align: center;
+    cursor: pointer;
+    transition:
+      transform 160ms ease,
+      background 160ms ease,
+      filter 160ms ease;
+  }
+
+  .create-cover-drop:hover:not(:disabled) {
+    filter: brightness(1.04);
+    transform: translateY(-1px);
+  }
+
+  .create-cover-drop:disabled {
+    cursor: progress;
+    opacity: 0.8;
+  }
+
+  .create-cover-drop.has-image {
+    padding: 0;
+  }
+
+  .create-cover-drop img {
+    display: block;
+    width: 100%;
+    height: 220px;
+    object-fit: cover;
+  }
+
+  .create-cover-mark {
+    color: var(--color-ornament, var(--color-brand-mark));
+    font-family: var(--font-editorial);
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+
+  .create-cover-drop strong {
+    color: var(--color-text);
+    font-size: 0.95rem;
+    font-weight: 650;
+  }
+
+  .create-cover-drop span:not(.create-cover-mark):not(.create-cover-hint) {
+    font-size: 0.78rem;
+  }
+
+  .create-cover-hint {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+    color: var(--color-text);
+    font-size: 0.75rem;
+    font-weight: 650;
+  }
+
+  .create-cover-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .create-fields {
+    display: grid;
+    gap: 0.85rem;
+  }
+
+  .create-meta-row {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 0.75rem;
+  }
+
+  .create-notice {
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--radius-md);
+    font-size: 0.88rem;
+  }
+
+  .create-notice.ok {
+    background: color-mix(in srgb, var(--color-success) 14%, transparent);
+    color: var(--color-success);
+  }
+
+  .create-notice.err {
+    background: color-mix(in srgb, var(--color-error) 14%, transparent);
+    color: var(--color-error);
+  }
+
+  .create-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    padding-top: 0.15rem;
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  }
+
+  @media (max-width: 720px) {
+    .create-body,
+    .create-meta-row {
+      grid-template-columns: 1fr;
+    }
+
+    .create-cover-drop,
+    .create-cover-drop img {
+      min-height: 180px;
+      height: 180px;
+    }
   }
 
   .add-sheet {

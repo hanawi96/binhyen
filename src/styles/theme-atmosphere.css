@@ -22,9 +22,10 @@
 }
 
 .atmosphere {
-  --atm-wash: #e6eee6;
-  --atm-a: #7d9a84;
-  --atm-b: #d5e0c8;
+  /* --atm-boot-* do AtmosphereBoot gắn trước paint (đúng màu bài đầu). */
+  --atm-wash: var(--atm-boot-wash, #e6eee6);
+  --atm-a: var(--atm-boot-a, #7d9a84);
+  --atm-b: var(--atm-boot-b, #d5e0c8);
   --atm-grain-opacity: 0.032;
   --atm-morph: 1.2s;
   --atm-morph-ease: cubic-bezier(0.4, 0.0, 0.2, 1);
@@ -61,10 +62,23 @@
       var(--color-background) 100%
     );
 
+  /* Chỉ morph sau paint đầu — tránh animate từ pastel sáng → tối khi reload. */
+  transition: none;
+}
+
+.atmosphere.is-paint-ready {
   transition:
     --atm-wash var(--atm-morph) var(--atm-morph-ease),
     --atm-a var(--atm-morph) var(--atm-morph-ease),
     --atm-b var(--atm-morph) var(--atm-morph-ease);
+}
+
+/* Fallback tối khi chưa có boot (trang khác); có boot thì dùng đúng màu bài. */
+html[data-theme="dark"] .atmosphere {
+  --atm-wash: var(--atm-boot-wash, #24352c);
+  --atm-a: var(--atm-boot-a, #5a7a66);
+  --atm-b: var(--atm-boot-b, #314538);
+  --atm-grain-opacity: 0.045;
 }
 
 .atmosphere-orb {
@@ -137,11 +151,6 @@
   mix-blend-mode: multiply;
   transition: opacity 0.55s var(--atm-morph-ease);
   pointer-events: none;
-}
-
-/* Dark: cùng bố cục & tỉ lệ mix — chỉ grain blend khác vì nền tối. */
-html[data-theme="dark"] .atmosphere {
-  --atm-grain-opacity: 0.045;
 }
 
 html[data-theme="dark"] .atmosphere.is-deep {

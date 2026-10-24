@@ -1,5 +1,6 @@
 import { CONTENT_ID_PATTERN } from "../admin/admin-http";
 import { normalizeSlug } from "../content/content-lifecycle";
+import { parseMediaUrl } from "../media/media-ref";
 
 export type CollectionStatus = "draft" | "published" | "archived";
 
@@ -8,6 +9,8 @@ export interface CollectionSummary {
   slug: string;
   title: string;
   description: string;
+  coverUrl: string;
+  coverAlt: string;
   status: CollectionStatus;
   sortOrder: number;
   itemCount: number;
@@ -33,6 +36,8 @@ export interface CollectionDraftInput {
   title: string;
   slug: string;
   description: string;
+  coverUrl: string;
+  coverAlt: string;
   status: CollectionStatus;
   sortOrder: number;
 }
@@ -42,6 +47,8 @@ interface CollectionRow {
   slug: string;
   title: string;
   description: string;
+  cover_url: string | null;
+  cover_alt: string | null;
   status: string;
   sort_order: number;
   created_at: number;
@@ -88,6 +95,8 @@ function mapSummary(row: CollectionRow): CollectionSummary {
     slug: row.slug,
     title: row.title,
     description: row.description,
+    coverUrl: typeof row.cover_url === "string" ? row.cover_url : "",
+    coverAlt: typeof row.cover_alt === "string" ? row.cover_alt : "",
     status,
     sortOrder: row.sort_order,
     itemCount: asCount(row.item_count),
@@ -116,6 +125,19 @@ export function normalizeCollectionDescription(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim().replace(/\s+/g, " ");
   if (text.length > 400) return null;
+  return text;
+}
+
+export function normalizeCollectionCoverUrl(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return "";
+  return parseMediaUrl(value);
+}
+
+export function normalizeCollectionCoverAlt(value: unknown): string | null {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") return null;
+  const text = value.trim().replace(/\s+/g, " ");
+  if (text.length > 160) return null;
   return text;
 }
 
@@ -168,6 +190,19 @@ export function parseCollectionDraft(
     return { ok: false, error: "Mô tả tối đa 400 ký tự." };
   }
 
+  const coverUrl = normalizeCollectionCoverUrl(source.coverUrl);
+  if (coverUrl === null) {
+    return {
+      ok: false,
+      error: "Ảnh bìa phải là HTTPS hoặc /api/media/image/…"
+    };
+  }
+
+  const coverAlt = normalizeCollectionCoverAlt(source.coverAlt);
+  if (coverAlt === null) {
+    return { ok: false, error: "Chú thích ảnh tối đa 160 ký tự." };
+  }
+
   const status = oneOfStatus(source.status) ?? "draft";
 
   let sortOrder = 0;
@@ -181,7 +216,15 @@ export function parseCollectionDraft(
 
   return {
     ok: true,
-    value: { title, slug, description, status, sortOrder }
+    value: {
+      title,
+      slug,
+      description,
+      coverUrl,
+      coverAlt: coverAlt || (coverUrl ? title : ""),
+      status,
+      sortOrder
+    }
   };
 }
 
@@ -197,7 +240,8 @@ export async function listCollectionsAdmin(
   const { results } = await db
     .prepare(
       `SELECT
-         c.id, c.slug, c.title, c.description, c.status, c.sort_order,
+         c.id, c.slug, c.title, c.description, c.cover_url, c.cover_alt,
+         c.status, c.sort_order,
          c.created_at, c.updated_at, c.published_at,
          (
            SELECT COUNT(*) FROM collection_contents cc
@@ -226,7 +270,8 @@ export async function listCollectionsPublic(
   const { results } = await db
     .prepare(
       `SELECT
-         c.id, c.slug, c.title, c.description, c.status, c.sort_order,
+         c.id, c.slug, c.title, c.description, c.cover_url, c.cover_alt,
+         c.status, c.sort_order,
          c.created_at, c.updated_at, c.published_at,
          (
            SELECT COUNT(*)
@@ -261,7 +306,8 @@ export async function getCollectionById(
   const row = await db
     .prepare(
       `SELECT
-         c.id, c.slug, c.title, c.description, c.status, c.sort_order,
+         c.id, c.slug, c.title, c.description, c.cover_url, c.cover_alt,
+         c.status, c.sort_order,
          c.created_at, c.updated_at, c.published_at,
          (
            SELECT COUNT(*) FROM collection_contents cc
@@ -296,7 +342,8 @@ export async function getCollectionBySlug(
   const row = await db
     .prepare(
       `SELECT
-         c.id, c.slug, c.title, c.description, c.status, c.sort_order,
+         c.id, c.slug, c.title, c.description, c.cover_url, c.cover_alt,
+         c.status, c.sort_order,
          c.created_at, c.updated_at, c.published_at,
          (
            SELECT COUNT(*)
@@ -383,15 +430,17 @@ export async function createCollection(
     await db
       .prepare(
         `INSERT INTO collections (
-           id, slug, title, description, status, sort_order,
-           created_at, updated_at, published_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)`
+           id, slug, title, description, cover_url, cover_alt,
+           status, sort_order, created_at, updated_at, published_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)`
       )
       .bind(
         id,
         draft.slug,
         draft.title,
         draft.description,
+        draft.coverUrl,
+        draft.coverAlt,
         draft.status,
         draft.sortOrder,
         now,
@@ -433,10 +482,12 @@ export async function updateCollection(
          SET slug = ?2,
              title = ?3,
              description = ?4,
-             status = ?5,
-             sort_order = ?6,
-             updated_at = ?7,
-             published_at = ?8
+             cover_url = ?5,
+             cover_alt = ?6,
+             status = ?7,
+             sort_order = ?8,
+             updated_at = ?9,
+             published_at = ?10
          WHERE id = ?1`
       )
       .bind(
@@ -444,6 +495,8 @@ export async function updateCollection(
         draft.slug,
         draft.title,
         draft.description,
+        draft.coverUrl,
+        draft.coverAlt,
         draft.status,
         draft.sortOrder,
         now,

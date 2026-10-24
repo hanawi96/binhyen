@@ -44,13 +44,15 @@ function seed(db) {
 
     db.prepare(
       `INSERT INTO collections (
-         id, slug, title, description, status, sort_order,
-         created_at, updated_at, published_at
+         id, slug, title, description, cover_url, cover_alt,
+         status, sort_order, created_at, updated_at, published_at
        ) VALUES
          (?1, '100-cau-dong-luc', '100 câu nói động lực',
-          'Những câu ngắn để đứng dậy nhẹ nhàng.', 'published', 0, ?3, ?3, ?3),
+          'Những câu ngắn để đứng dậy nhẹ nhàng.', '', '',
+          'published', 0, ?3, ?3, ?3),
          (?2, 'binh-yen-moi-ngay', 'Bình yên mỗi ngày',
-          'Một khoảng lặng cho tâm hồn.', 'published', 1, ?3, ?3, ?3)`
+          'Một khoảng lặng cho tâm hồn.', '', '',
+          'published', 1, ?3, ?3, ?3)`
     ).run(COL_A, COL_B, now);
 
     const published = db

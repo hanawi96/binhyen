@@ -41,6 +41,19 @@ describe("collection validators", () => {
     if (draft.ok) {
       expect(draft.value.slug).toBe("binh-yen-moi-ngay");
       expect(draft.value.status).toBe("published");
+      expect(draft.value.coverUrl).toBe("");
+      expect(draft.value.coverAlt).toBe("");
+    }
+
+    const withCover = parseCollectionDraft({
+      title: "Có ảnh",
+      coverUrl: "/api/media/image/2026/10/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+      coverAlt: "Bìa xanh"
+    });
+    expect(withCover.ok).toBe(true);
+    if (withCover.ok) {
+      expect(withCover.value.coverUrl).toContain("/api/media/image/");
+      expect(withCover.value.coverAlt).toBe("Bìa xanh");
     }
 
     const cursor = { sortOrder: 3, id: "c01" };
@@ -73,6 +86,8 @@ describe("d1 collections store", () => {
         title: "100 câu động lực",
         slug: "100-cau-dong-luc",
         description: "Thắp lửa nhẹ nhàng.",
+        coverUrl: "",
+        coverAlt: "",
         status: "published",
         sortOrder: 0
       },
@@ -114,6 +129,8 @@ describe("d1 collections store", () => {
         title: "100 câu động lực",
         slug: "100-cau-dong-luc",
         description: "Cập nhật.",
+        coverUrl: "",
+        coverAlt: "",
         status: "draft",
         sortOrder: 1
       },
@@ -131,6 +148,8 @@ describe("d1 collections store", () => {
         title: "Rỗng",
         slug: "rong",
         description: "",
+        coverUrl: "",
+        coverAlt: "",
         status: "draft",
         sortOrder: 9
       },
