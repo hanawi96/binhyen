@@ -34,7 +34,10 @@ if (exported.status !== 0) {
 const sql = readFileSync(output, "utf8");
 const tempDir = tmpdir();
 const restoredPath = join(tempDir, `binhyen-restore-${stamp}.sqlite`);
-const restored = new DatabaseSync(restoredPath);
+// Ban xuat cua wrangler khong xep bang theo khoa ngoai.
+const restored = new DatabaseSync(restoredPath, {
+  enableForeignKeyConstraints: false
+});
 let liveDatabase;
 
 try {
