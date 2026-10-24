@@ -2639,10 +2639,6 @@
     max-height: 46%;
   }
 
-  .preview-stage :global(.topic-label) {
-    font-size: 0.72rem;
-  }
-
   .preview-stage :global(.readmore) {
     margin-top: 14px;
     font-size: 0.7rem;

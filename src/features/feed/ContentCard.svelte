@@ -5,7 +5,6 @@
     imageAspectRatio,
     videoAspectRatio
   } from "../content/content-media";
-  import { primaryTopicLabel } from "../content/topic-look";
   import CardPoll from "./CardPoll.svelte";
 
   interface Props {
@@ -23,11 +22,6 @@
     onRead,
     actions
   }: Props = $props();
-
-  /** Chủ đề chính: topicLabel DB, không thì topics[0]. */
-  const displayTopic = $derived(
-    content.topicLabel?.trim() || primaryTopicLabel(content.topics)
-  );
 
   let videoEl = $state<HTMLVideoElement | null>(null);
   let playing = $state(false);
@@ -107,14 +101,6 @@
     </div>
   {/if}
 
-  {#if displayTopic}
-    <p class="topic-label">
-      <span class="topic-rule" aria-hidden="true"></span>
-      <span class="topic-text">{displayTopic}</span>
-      <span class="topic-rule" aria-hidden="true"></span>
-    </p>
-  {/if}
-
   {#if showImage && content.image}
     <div class="frame" style={`aspect-ratio: ${imageRatio}`}>
       <img
@@ -184,8 +170,8 @@
 
 <style>
   .stage {
-    /* Khoảng cố định từ hàng like/lưu → chủ đề (mọi dạng nội dung). */
-    --actions-to-topic: 1rem;
+    /* Khoảng actions ↔ nội dung = nội dung ↔ Đọc thêm (đối xứng). */
+    --chrome-gap: 1.5rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -203,7 +189,6 @@
   .stage.media {
     /* Ảnh co trước; tiêu đề không bị stage cắt chân chữ. */
     justify-content: center;
-    /* Cùng --actions-to-topic giữa actions và topic; các khoảng còn lại giữ 14px. */
     gap: 14px;
     padding-bottom: 20px;
   }
@@ -215,16 +200,13 @@
     justify-content: center;
     align-self: stretch;
     width: 100%;
-    margin: 0 0 var(--actions-to-topic);
+    margin: 0 0 var(--chrome-gap);
     padding-inline: 4px;
   }
 
-  /*
-   * Media: flex gap cũng nằm giữa actions và topic → trừ gap để tổng
-   * vẫn đúng --actions-to-topic (đồng bộ với bài chữ / poll không media).
-   */
+  /* Media: khoảng cách do gap của stage. */
   .stage.media .card-actions {
-    margin-bottom: calc(var(--actions-to-topic) - 14px);
+    margin-bottom: 0;
   }
 
   @media (min-width: 641px) {
@@ -250,35 +232,6 @@
     transform: translateY(-16px);
   }
 
-  .topic-label {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    gap: 0.65em;
-    margin: 0 0 12px;
-    color: var(--color-ornament);
-    font-size: 0.82rem;
-    font-weight: 650;
-    letter-spacing: 0.06em;
-    line-height: 1.2;
-    text-transform: uppercase;
-  }
-
-  .topic-rule {
-    display: block;
-    width: 1.35em;
-    height: 1.5px;
-    border-radius: 1px;
-    background: currentColor;
-    opacity: 0.75;
-    flex-shrink: 0;
-  }
-
-  .topic-text {
-    min-width: 0;
-  }
-
   .frame {
     position: relative;
     flex: 0 1 auto;
@@ -292,9 +245,9 @@
     background: color-mix(in oklab, var(--color-text) 6%, transparent);
   }
 
-  /* Chừa chỗ cố định cho tiêu đề (+ topic/actions) — ảnh không nuốt hết chiều cao. */
+  /* Chừa chỗ cố định cho tiêu đề (+ actions) — ảnh không nuốt hết chiều cao. */
   .stage.media .frame {
-    max-height: min(58dvh, calc(100% - 5.5rem));
+    max-height: min(58dvh, calc(100% - 4.5rem));
   }
 
   /* Cover full khung — tránh letterbox khi max-height làm lệch tỉ lệ khung. */
@@ -373,9 +326,14 @@
     line-clamp: unset;
   }
 
+  /*
+   * Khoảng nhìn headline → chữ «Đọc thêm» = --chrome-gap
+   * (padding trên nằm trong gap; padding dưới chỉ để chạm dễ hơn).
+   */
   .readmore {
-    margin-top: 24px;
-    padding: 10px 14px;
+    --readmore-pad-y: 10px;
+    margin-top: calc(var(--chrome-gap) - var(--readmore-pad-y));
+    padding: var(--readmore-pad-y) 14px;
     border: 0;
     background: transparent;
     color: var(--color-primary);
@@ -409,7 +367,7 @@
     }
 
     .stage.media .frame {
-      max-height: min(50dvh, calc(100% - 5.25rem));
+      max-height: min(50dvh, calc(100% - 4.25rem));
     }
   }
 
@@ -433,7 +391,7 @@
     }
 
     .stage.media .frame {
-      max-height: min(46dvh, calc(100% - 4.75rem));
+      max-height: min(46dvh, calc(100% - 3.75rem));
     }
   }
 </style>
