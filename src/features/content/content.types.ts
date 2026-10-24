@@ -67,6 +67,10 @@ export function isContentTheme(value: string): value is ContentTheme {
   return (contentThemes as readonly string[]).includes(value);
 }
 
+export function isContentTopic(value: string): value is ContentTopic {
+  return (contentTopics as readonly string[]).includes(value);
+}
+
 /**
  * Trang thai xuat ban.
  */

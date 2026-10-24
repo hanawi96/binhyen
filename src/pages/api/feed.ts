@@ -5,7 +5,10 @@ import {
   isMoodFilter,
   isTopicFilter
 } from "../../features/content/filter-contents";
+import { readSessionTopics } from "../../features/account/d1-profile-store";
+import { loadLovedFeed } from "../../features/feed/load-loved-feed";
 import { loadPublicFeed } from "../../features/feed/load-public-feed";
+import { decodeLovedCursor } from "../../features/feed/loved-cursor";
 import {
   decodeRankCursor,
   startRankCursor
@@ -64,6 +67,62 @@ export const GET: APIRoute = async ({ request }) => {
     );
   }
 
+  const section = url.searchParams.get("section");
+
+  if (section !== null && section !== "loved") {
+    return Response.json(
+      {
+        success: false,
+        error: "Invalid section"
+      },
+      { status: 400 }
+    );
+  }
+
+  if (section === "loved") {
+    if (rawCursor !== null && !decodeLovedCursor(rawCursor)) {
+      return Response.json(
+        {
+          success: false,
+          error: "Invalid cursor"
+        },
+        { status: 400 }
+      );
+    }
+
+    try {
+      const page = await loadLovedFeed(env.DB, {
+        cursor: rawCursor,
+        limit
+      });
+
+      return Response.json(
+        { success: true, ...page },
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff"
+          }
+        }
+      );
+    } catch (error) {
+      console.error("Loved feed API error:", error);
+
+      return Response.json(
+        {
+          success: false,
+          error: "Unable to load content"
+        },
+        {
+          status: 500,
+          headers: {
+            "Cache-Control": "no-store"
+          }
+        }
+      );
+    }
+  }
+
   if (topic === null) {
     return Response.json(
       {
@@ -104,11 +163,20 @@ export const GET: APIRoute = async ({ request }) => {
   }
 
   try {
+    const favorites =
+      rawCursor === null && topic === "all" && mood === "all"
+        ? await readSessionTopics(
+            env.DB,
+            request.headers.get("cookie"),
+            Math.floor(Date.now() / 1000)
+          )
+        : [];
     const page = await loadPublicFeed(env.DB, {
       topic,
       mood,
       cursor: rawCursor,
-      limit
+      limit,
+      favorites
     });
 
     return Response.json(

@@ -28,7 +28,7 @@ export interface PublicFeedPage {
   matched: boolean;
 }
 
-interface ContentRow {
+export interface ContentRow {
   id: string;
   slug: string;
   kind: string;
@@ -47,7 +47,7 @@ interface RankedContent extends ContentItem {
   publishedAt: number;
 }
 
-function mapRow(row: ContentRow): RankedContent {
+export function mapRow(row: ContentRow): RankedContent {
   return {
     id: row.id,
     slug: row.slug,
@@ -66,7 +66,7 @@ function mapRow(row: ContentRow): RankedContent {
   };
 }
 
-function toContentItem(row: RankedContent): ContentItem {
+export function toContentItem(row: RankedContent): ContentItem {
   return {
     id: row.id,
     slug: row.slug,
@@ -82,12 +82,17 @@ function toContentItem(row: RankedContent): ContentItem {
   };
 }
 
-function existsTopic(slot: number): string {
+function existsTopic(firstSlot: number, count: number): string {
+  const slots = Array.from(
+    { length: count },
+    (_, index) => `?${firstSlot + index}`
+  ).join(", ");
+
   return `EXISTS (
     SELECT 1
     FROM content_topics ct
     WHERE ct.content_id = c.id
-      AND ct.topic_slug = ?${slot}
+      AND ct.topic_slug IN (${slots})
   )`;
 }
 
@@ -100,25 +105,25 @@ function existsMood(slot: number): string {
   )`;
 }
 
+/** Mot chu de dang chon, hoac cac chu de yeu thich o "Danh cho ban". */
 function bucketQuery(
   bucket: FeedBucket,
-  topic: TopicFilter,
+  topics: readonly string[],
   mood: MoodFilter,
   mark: StreamMark,
   limit: number
 ): { sql: string; binds: Array<string | number | null> } | null {
   if (mark.mode === "done") return null;
 
-  const topicOn = topic !== "all";
+  const topicOn = topics.length > 0;
   const moodOn = mood !== "all";
   const topicSlot = 3;
-  const moodSlot = topicOn ? 4 : 3;
-  const extra: string[] = [];
+  const moodSlot = topicSlot + topics.length;
+  const extra: string[] = [...topics];
 
-  if (topicOn) extra.push(topic);
   if (moodOn) extra.push(mood);
 
-  const topicSql = existsTopic(topicSlot);
+  const topicSql = existsTopic(topicSlot, topics.length);
   const moodSql = existsMood(moodSlot);
   let filterSql: string | null = null;
 
@@ -205,11 +210,13 @@ export async function loadPublicFeed(
     mood: MoodFilter;
     cursor: string | null;
     limit: number;
+    /** Chi dung o trang dau; trang sau lay tu cursor. */
+    favorites?: readonly ContentTopic[];
   }
 ): Promise<PublicFeedPage> {
   const cursor =
     input.cursor === null
-      ? startRankCursor(input.topic, input.mood)
+      ? startRankCursor(input.topic, input.mood, input.favorites)
       : decodeRankCursor(input.cursor);
 
   if (
@@ -228,10 +235,13 @@ export async function loadPublicFeed(
   const jobs: D1PreparedStatement[] = [];
   const order: FeedBucket[] = [];
 
+  const topics =
+    input.topic === "all" ? cursor.favorites : [input.topic];
+
   for (const bucket of buckets) {
     const query = bucketQuery(
       bucket,
-      input.topic,
+      topics,
       input.mood,
       cursor[bucket],
       input.limit
@@ -279,9 +289,9 @@ export async function loadPublicFeed(
       ? encodeRankCursor(ranked.cursor)
       : null,
     hasMore: ranked.hasMore,
-    matched: hasDirectMatch(
-      cursor.preferred,
-      streams.preferred.items.length
-    )
+    // Chu de yeu thich chua co bai thi van la "Danh cho ban", khong bao loi loc.
+    matched:
+      cursor.favorites.length > 0 ||
+      hasDirectMatch(cursor.preferred, streams.preferred.items.length)
   };
 }

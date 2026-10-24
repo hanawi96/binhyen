@@ -1,8 +1,10 @@
 import {
   isContentKind,
   isContentTheme,
+  isContentTopic,
   type ContentKind,
-  type ContentTheme
+  type ContentTheme,
+  type ContentTopic
 } from "../content/content.types";
 import {
   isMoodFilter,
@@ -31,6 +33,8 @@ export interface StreamMark {
 export interface RankCursor {
   topic: TopicFilter;
   mood: MoodFilter;
+  /** Chu de yeu thich, chot tu trang dau de ca phien on dinh. */
+  favorites: ContentTopic[];
   emitted: number;
   lastTheme: ContentTheme | null;
   lastKind: ContentKind | null;
@@ -62,13 +66,27 @@ export function hasDirectMatch(
   return preferredCount > 0;
 }
 
+const MAX_FAVORITES = 8;
+
+/** Chi dung khi khong loc gi; sap xep de cursor gon va on dinh. */
+function cleanFavorites(
+  topic: TopicFilter,
+  mood: MoodFilter,
+  favorites: readonly ContentTopic[]
+): ContentTopic[] {
+  if (topic !== "all" || mood !== "all") return [];
+  return [...new Set(favorites)].sort().slice(0, MAX_FAVORITES);
+}
+
 export function startRankCursor(
   topic: TopicFilter,
-  mood: MoodFilter
+  mood: MoodFilter,
+  favorites: readonly ContentTopic[] = []
 ): RankCursor {
   return {
     topic,
     mood,
+    favorites: cleanFavorites(topic, mood, favorites),
     emitted: 0,
     lastTheme: null,
     lastKind: null,
@@ -180,6 +198,7 @@ export function assembleRankedPage<T extends Rankable>(
   const cursor: RankCursor = {
     topic: state.topic,
     mood: state.mood,
+    favorites: state.favorites,
     emitted,
     lastTheme,
     lastKind,
@@ -237,9 +256,10 @@ export function encodeRankCursor(cursor: RankCursor): string {
   const surprise = encodeMark(cursor.surprise);
 
   return [
-    "v4",
+    "v5",
     cursor.topic,
     cursor.mood,
+    cursor.favorites.length > 0 ? cursor.favorites.join(".") : "-",
     cursor.emitted,
     preferred[0],
     preferred[1],
@@ -285,7 +305,7 @@ export function decodeRankCursor(value: string): RankCursor | null {
   if (value.length === 0 || value.length > 2048) return null;
 
   const match =
-    /^v4:([a-z]+):([a-z]+):(\d+):(-|x|\d+):([^:]*):(-|x|\d+):([^:]*):(-|x|\d+):([^:]*):([a-z]+|-):([a-z]+|-)$/.exec(
+    /^v5:([a-z]+):([a-z]+):(-|[a-z]+(?:\.[a-z]+)*):(\d+):(-|x|\d+):([^:]*):(-|x|\d+):([^:]*):(-|x|\d+):([^:]*):([a-z]+|-):([a-z]+|-)$/.exec(
       value
     );
 
@@ -293,7 +313,8 @@ export function decodeRankCursor(value: string): RankCursor | null {
 
   const topic = match[1] ?? "";
   const mood = match[2] ?? "";
-  const emitted = Number(match[3]);
+  const favoriteToken = match[3] ?? "-";
+  const emitted = Number(match[4]);
 
   if (
     !isTopicFilter(topic) ||
@@ -303,14 +324,25 @@ export function decodeRankCursor(value: string): RankCursor | null {
     return null;
   }
 
-  const preferred = decodeMark(match[4] ?? "", match[5] ?? "");
-  const related = decodeMark(match[6] ?? "", match[7] ?? "");
-  const surprise = decodeMark(match[8] ?? "", match[9] ?? "");
+  const favoriteParts =
+    favoriteToken === "-" ? [] : favoriteToken.split(".");
+  const favorites = favoriteParts.filter(isContentTopic);
+
+  if (
+    favorites.length !== favoriteParts.length ||
+    cleanFavorites(topic, mood, favorites).join(".") !== favorites.join(".")
+  ) {
+    return null;
+  }
+
+  const preferred = decodeMark(match[5] ?? "", match[6] ?? "");
+  const related = decodeMark(match[7] ?? "", match[8] ?? "");
+  const surprise = decodeMark(match[9] ?? "", match[10] ?? "");
 
   if (!preferred || !related || !surprise) return null;
 
-  const themeToken = match[10] ?? "-";
-  const kindToken = match[11] ?? "-";
+  const themeToken = match[11] ?? "-";
+  const kindToken = match[12] ?? "-";
 
   let lastTheme: ContentTheme | null = null;
   let lastKind: ContentKind | null = null;
@@ -328,6 +360,7 @@ export function decodeRankCursor(value: string): RankCursor | null {
   return {
     topic,
     mood,
+    favorites,
     emitted,
     lastTheme,
     lastKind,

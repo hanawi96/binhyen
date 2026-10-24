@@ -143,6 +143,7 @@ function isContent(value: unknown): value is ContentItem {
 }
 
 interface ApiFeedOptions {
+  section?: "loved";
   origin?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
@@ -205,8 +206,13 @@ export function createApiFeedSource(
 
       const url = new URL("/api/feed", origin);
       url.searchParams.set("limit", String(size));
-      url.searchParams.set("topic", topic);
-      url.searchParams.set("mood", mood);
+
+      if (options.section) {
+        url.searchParams.set("section", options.section);
+      } else {
+        url.searchParams.set("topic", topic);
+        url.searchParams.set("mood", mood);
+      }
 
       if (cursor !== FIRST_CURSOR) {
         url.searchParams.set("cursor", cursor);

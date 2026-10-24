@@ -183,9 +183,35 @@ describe("Ranked feed pages", () => {
 
     const encoded = encodeRankCursor(page.cursor);
 
-    expect(encoded.startsWith("v4:")).toBe(true);
+    expect(encoded.startsWith("v5:science:curious:-:")).toBe(true);
     expect(decodeRankCursor(encoded)).toEqual(page.cursor);
     expect(decodeRankCursor("v3:20:4:science:curious")).toBeNull();
+  });
+
+  it("keeps favorite topics only when nothing is filtered", () => {
+    const personal = startRankCursor("all", "all", [
+      "nature",
+      "peace",
+      "nature"
+    ]);
+    const encoded = encodeRankCursor(personal);
+
+    expect(personal.favorites).toEqual(["nature", "peace"]);
+    expect(encoded.startsWith("v5:all:all:nature.peace:0:")).toBe(true);
+    expect(decodeRankCursor(encoded)).toEqual(personal);
+    expect(startRankCursor("science", "all", ["peace"]).favorites).toEqual(
+      []
+    );
+    expect(startRankCursor("all", "sad", ["peace"]).favorites).toEqual([]);
+  });
+
+  it("rejects favorite topics that do not fit the cursor", () => {
+    const tail = ":0:-:-:-:-:-:-:-:-";
+
+    expect(decodeRankCursor(`v5:all:all:peace.nature${tail}`)).toBeNull();
+    expect(decodeRankCursor(`v5:all:all:peace.unknown${tail}`)).toBeNull();
+    expect(decodeRankCursor(`v5:science:all:peace${tail}`)).toBeNull();
+    expect(decodeRankCursor(`v5:all:all:nature.peace${tail}`)).not.toBeNull();
   });
 
   it("says a filter has no post of its own only when preferred is empty", () => {
