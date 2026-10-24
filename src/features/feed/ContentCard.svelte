@@ -49,11 +49,31 @@
   const videoRatio = $derived(videoAspectRatio(content.video));
 
   $effect(() => {
-    if (active) return;
     const node = videoEl;
-    if (!node) return;
-    node.pause();
-    playing = false;
+    if (!node || !showVideo) return;
+
+    if (!active) {
+      node.pause();
+      playing = false;
+      return;
+    }
+
+    let cancelled = false;
+    void node
+      .play()
+      .then(() => {
+        if (!cancelled) playing = true;
+      })
+      .catch(() => {
+        /* Trình duyệt chặn autoplay — giữ nút phát. */
+        if (!cancelled) playing = false;
+      });
+
+    return () => {
+      cancelled = true;
+      node.pause();
+      playing = false;
+    };
   });
 
   async function togglePlay() {
@@ -120,6 +140,7 @@
         poster={content.video.poster ?? undefined}
         playsinline
         muted
+        loop
         preload="metadata"
         aria-label={content.video.alt || content.title}
         onplay={() => (playing = true)}
@@ -267,6 +288,7 @@
     min-height: 0;
     margin: 0 auto;
     overflow: hidden;
+    border-radius: 14px;
     background: color-mix(in oklab, var(--color-text) 6%, transparent);
   }
 
