@@ -1,6 +1,6 @@
 
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import ContentCard from "./ContentCard.svelte";
   import { demoContents } from "../content/demo-contents";
   import type { ContentItem } from "../content/content.types";
@@ -110,11 +110,6 @@
   let currentIndex = $state(0);
   let dragging = $state(false);
   let animating = $state(false);
-  let progress = $derived(
-    contents.length
-      ? ((currentIndex + 1) / contents.length) * 100
-      : 0
-  );
   let reading = $state(false);
   let readerShown = $state(false);
   let articleBlocks = $state<ArticleBlock[]>([]);
@@ -178,13 +173,95 @@
     reading && readItem ? readItem : (contents[currentIndex] ?? null)
   );
 
-  // Chua tai xong thi khong hien so, tranh nhay tu 0.
-  let activeReaction = $derived<Reaction | null>(
-    reactions[activeItem?.id ?? ""] ?? null
+  // So tren rail: giu so cu khi doi the / dang tai, roi truot sang so moi.
+  type RailStats = {
+    likeText: string;
+    saveText: string;
+    shareText: string;
+    liked: boolean;
+    saved: boolean;
+  };
+
+  const RAIL_MS = 400;
+  /** Hien san 0 — tranh o trong roi nhay so khi load trang. */
+  const RAIL_PLACEHOLDER: RailStats = {
+    likeText: "0",
+    saveText: "0",
+    shareText: "0",
+    liked: false,
+    saved: false
+  };
+
+  let railShown = $state<RailStats>({ ...RAIL_PLACEHOLDER });
+  let railEnter = $state<RailStats | null>(null);
+  let railDir = $state<1 | -1>(1);
+  let railMoving = $state(false);
+  let railTimer = 0;
+  let railCardId: string | null = null;
+  let railIndex = 0;
+  let railPrimed = $state(false);
+
+  let railView = $derived(
+    railMoving && railEnter ? railEnter : railShown
   );
 
-  function formatCount(value: number | undefined): string {
-    return value === undefined ? "" : countFormat.format(value);
+  function statsFrom(reaction: Reaction): RailStats {
+    return {
+      likeText: countFormat.format(reaction.likeCount),
+      saveText: countFormat.format(reaction.saveCount),
+      shareText: countFormat.format(reaction.shareCount),
+      liked: reaction.liked,
+      saved: reaction.saved
+    };
+  }
+
+  function sameRailText(left: RailStats, right: RailStats): boolean {
+    return (
+      left.likeText === right.likeText &&
+      left.saveText === right.saveText &&
+      left.shareText === right.shareText
+    );
+  }
+
+  function reduceRailMotion(): boolean {
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  function commitRail(next: RailStats, dir: 1 | -1) {
+    if (railTimer) {
+      window.clearTimeout(railTimer);
+      railTimer = 0;
+    }
+
+    const prev = untrack(() => railShown);
+    const firstPaint = !untrack(() => railPrimed);
+
+    // Lan dau co data: doi so tai cho (khong flash rong → so).
+    if (
+      firstPaint ||
+      reduceRailMotion() ||
+      sameRailText(prev, next)
+    ) {
+      railShown = next;
+      railEnter = null;
+      railMoving = false;
+      railPrimed = true;
+      return;
+    }
+
+    railDir = dir;
+    railEnter = next;
+    railMoving = true;
+    railPrimed = true;
+    railTimer = window.setTimeout(() => {
+      railShown = next;
+      railEnter = null;
+      railMoving = false;
+      railTimer = 0;
+    }, RAIL_MS);
   }
 
   function readReaction(value: unknown): Reaction | null {
@@ -481,6 +558,15 @@
     reactions = {};
     for (const id of Object.keys(lastWrite)) delete lastWrite[id];
     reactionLoads.clear();
+    if (railTimer) {
+      window.clearTimeout(railTimer);
+      railTimer = 0;
+    }
+    railShown = { ...RAIL_PLACEHOLDER };
+    railEnter = null;
+    railMoving = false;
+    railCardId = null;
+    railPrimed = false;
     invalidateMine();
   }
 
@@ -518,13 +604,46 @@
     void setReaction(item.id, kind, on);
   }
 
-  // Doi the dung yen mot chut moi tai, luot nhanh khong goi API.
+  // Cap nhat so rail: doi the thi truot; chua co data thi giu so cu (khong an).
+  $effect(() => {
+    const item = activeItem;
+    const index = currentIndex;
+    if (!item) return;
+
+    const reaction = reactions[item.id];
+    if (!reaction) return;
+
+    const next = statsFrom(reaction);
+    const sameCard = railCardId === item.id;
+    const dir: 1 | -1 = index >= railIndex ? 1 : -1;
+
+    if (sameCard) {
+      // Cung the (bam thich/luu): doi so ngay, khong truot.
+      if (railTimer) {
+        window.clearTimeout(railTimer);
+        railTimer = 0;
+      }
+      railShown = next;
+      railEnter = null;
+      railMoving = false;
+      return;
+    }
+
+    commitRail(next, dir);
+    railCardId = item.id;
+    railIndex = index;
+  });
+
+  // Bai dang xem: tai ngay. Bai vua vuot toi: doi 250ms tranh goi API khi luot nhanh.
   $effect(() => {
     const id = activeItem?.id;
 
     if (!id || reactions[id] || reactionLoads.has(id)) {
       return;
     }
+
+    const switching = untrack(() => railCardId !== null && railCardId !== id);
+    const delay = switching ? 250 : 0;
 
     const timer = window.setTimeout(() => {
       const epoch = reactionEpoch;
@@ -541,7 +660,7 @@
         .finally(() => {
           if (epoch === reactionEpoch) reactionLoads.delete(id);
         });
-    }, 250);
+    }, delay);
 
     return () => window.clearTimeout(timer);
   });
@@ -1795,10 +1914,28 @@
             <path d="M5 19.5c1.4-3.2 4-4.8 7-4.8s5.6 1.6 7 4.8" />
           </svg>
         {/if}
-        <span>Tài khoản</span>
+        <span>{user?.displayName?.trim() || "Tài khoản"}</span>
       </button>
     </nav>
   </footer>
+
+  {#snippet railCount(field: "likeText" | "saveText" | "shareText")}
+    <span class="rail-count">
+      <span
+        class="rail-count-stage"
+        class:is-moving={railMoving}
+        class:to-next={railDir === 1}
+        class:to-prev={railDir === -1}
+      >
+        {#if railMoving && railEnter}
+          <span class="rail-count-layer is-out">{railShown[field]}</span>
+          <span class="rail-count-layer is-in">{railEnter[field]}</span>
+        {:else}
+          <span class="rail-count-layer">{railShown[field]}</span>
+        {/if}
+      </span>
+    </span>
+  {/snippet}
 
   {#if activeItem}
     <div class="read-rail" inert={sheetOpen && !reading}>
@@ -1806,35 +1943,31 @@
         <button
           type="button"
           class="read-icon"
-          class:active={activeReaction?.liked}
+          class:active={railView?.liked ?? false}
           aria-label="Yêu thích"
-          aria-pressed={activeReaction?.liked ?? false}
+          aria-pressed={railView?.liked ?? false}
           onclick={() => toggleReaction("like")}
         >
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
           </svg>
         </button>
-        <span class="rail-count">
-          {formatCount(activeReaction?.likeCount)}
-        </span>
+        {@render railCount("likeText")}
       </div>
       <div class="rail-item">
         <button
           type="button"
           class="read-icon"
-          class:active={activeReaction?.saved}
+          class:active={railView?.saved ?? false}
           aria-label="Lưu"
-          aria-pressed={activeReaction?.saved ?? false}
+          aria-pressed={railView?.saved ?? false}
           onclick={() => toggleReaction("save")}
         >
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
           </svg>
         </button>
-        <span class="rail-count">
-          {formatCount(activeReaction?.saveCount)}
-        </span>
+        {@render railCount("saveText")}
       </div>
       <div class="rail-item">
         <button
@@ -1850,9 +1983,7 @@
             <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
           </svg>
         </button>
-        <span class="rail-count">
-          {formatCount(activeReaction?.shareCount)}
-        </span>
+        {@render railCount("shareText")}
       </div>
     </div>
   {/if}
@@ -1934,10 +2065,11 @@
     </article>
   {/if}
 
-  <div
-    class="progress"
-    style:width="{reading ? readProgress : progress}%"
-  ></div>
+  {#if reading}
+    <div class="progress-track" aria-hidden="true">
+      <div class="progress" style:width="{readProgress}%"></div>
+    </div>
+  {/if}
 
   <p class="loading-slot" aria-live="polite">
     {#if loading && !canNext}
@@ -2748,12 +2880,24 @@
     stroke-width: 2;
   }
 
-  .progress {
+  .progress-track {
     position: absolute;
-    left: 0;
-    bottom: 0;
+    left: 16px;
+    right: 16px;
+    bottom: 10px;
     z-index: 6;
     height: 2px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .progress {
+    height: 100%;
+    border: 0;
+    border-radius: 999px;
     background: var(--color-progress);
     transition: width 0.28s ease;
   }
@@ -2833,6 +2977,11 @@
     .progress,
     .slide {
       transition-duration: 0.01ms;
+    }
+
+    .rail-count-stage.is-moving .is-out,
+    .rail-count-stage.is-moving .is-in {
+      animation-duration: 0.01ms;
     }
   }
 
@@ -2921,11 +3070,93 @@
   }
 
   .rail-count {
-    min-height: 13px;
+    position: relative;
+    display: block;
+    width: 2.4rem;
+    height: 13px;
+    overflow: hidden;
     color: var(--color-text-muted);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
     line-height: 13px;
+    text-align: center;
+  }
+
+  .rail-count-stage {
+    position: relative;
+    display: block;
+    height: 100%;
+  }
+
+  .rail-count-layer {
+    display: block;
+    height: 13px;
+    line-height: 13px;
+  }
+
+  .rail-count-stage.is-moving .rail-count-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .rail-count-stage.is-moving.to-next .is-out {
+    animation: rail-out-up var(--rail-ms, 400ms) ease both;
+  }
+
+  .rail-count-stage.is-moving.to-next .is-in {
+    animation: rail-in-up var(--rail-ms, 400ms) ease both;
+  }
+
+  .rail-count-stage.is-moving.to-prev .is-out {
+    animation: rail-out-down var(--rail-ms, 400ms) ease both;
+  }
+
+  .rail-count-stage.is-moving.to-prev .is-in {
+    animation: rail-in-down var(--rail-ms, 400ms) ease both;
+  }
+
+  @keyframes rail-out-up {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(-110%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes rail-in-up {
+    from {
+      transform: translateY(110%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes rail-out-down {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(110%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes rail-in-down {
+    from {
+      transform: translateY(-110%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 
   .read-icon {
