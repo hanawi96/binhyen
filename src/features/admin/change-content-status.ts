@@ -13,8 +13,24 @@ export interface ContentStatusStore {
     from: ContentStatus,
     status: ContentStatus,
     publishedAt: number | null,
-    now: number
+    now: number,
+    note: string | null
   ): Promise<boolean>;
+}
+
+export const MAX_STATUS_NOTE = 300;
+
+/** Ly do tuy chon: bo trong la null; qua dai hoac sai kieu thi tu choi. */
+export function readStatusNote(
+  value: unknown
+): { ok: true; note: string | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, note: null };
+  if (typeof value !== "string") return { ok: false };
+
+  const note = value.replace(/\s+/g, " ").trim();
+  if (note.length > MAX_STATUS_NOTE) return { ok: false };
+
+  return { ok: true, note: note || null };
 }
 
 export type ContentStatusChange =
@@ -45,7 +61,8 @@ export async function changeContentStatus(
   store: ContentStatusStore,
   id: string,
   to: ContentStatus,
-  now: number
+  now: number,
+  note: string | null = null
 ): Promise<ContentStatusChange> {
   const current = await store.find(id);
 
@@ -71,7 +88,9 @@ export async function changeContentStatus(
     current.status,
     next.status,
     next.publishedAt,
-    now
+    now,
+    // Chi luc tu choi moi can ly do cho nguoi viet.
+    next.status === "archived" ? note : null
   );
 
   if (!saved) {

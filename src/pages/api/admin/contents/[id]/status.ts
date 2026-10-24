@@ -6,7 +6,11 @@ import {
   CONTENT_ID_PATTERN,
   adminJson
 } from "../../../../../features/admin/admin-http";
-import { changeContentStatus } from "../../../../../features/admin/change-content-status";
+import {
+  MAX_STATUS_NOTE,
+  changeContentStatus,
+  readStatusNote
+} from "../../../../../features/admin/change-content-status";
 import { createD1ContentStatusStore } from "../../../../../features/admin/d1-content-status";
 import { requireAdmin } from "../../../../../features/admin/require-admin";
 
@@ -23,7 +27,8 @@ function isTargetStatus(value: unknown): value is ContentStatus {
 }
 
 /**
- * POST /api/admin/contents/:id/status
+ * POST /api/admin/contents/:id/status  { status, note? }
+ * note chi duoc luu khi tu choi (archived).
  *
  * Doi trang thai bang token Bearer. Khong dung cookie,
  * nen trinh duyet khong tu gui quyen nay.
@@ -75,12 +80,27 @@ export const POST: APIRoute = async ({ request, params }) => {
     );
   }
 
+  const note = readStatusNote(
+    body && typeof body === "object" && "note" in body ? body.note : undefined
+  );
+
+  if (!note.ok) {
+    return adminJson(
+      {
+        success: false,
+        error: `Lý do tối đa ${MAX_STATUS_NOTE} ký tự.`
+      },
+      400
+    );
+  }
+
   try {
     const result = await changeContentStatus(
       createD1ContentStatusStore(env.DB),
       id,
       status,
-      Math.floor(Date.now() / 1000)
+      Math.floor(Date.now() / 1000),
+      note.note
     );
 
     if (!result.ok && result.reason === "missing") {

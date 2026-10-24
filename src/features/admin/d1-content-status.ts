@@ -32,7 +32,7 @@ export function createD1ContentStatusStore(
       };
     },
 
-    async save(id, from, status, publishedAt, now) {
+    async save(id, from, status, publishedAt, now, note) {
       const updated = await db
         .prepare(
           `UPDATE contents
@@ -53,11 +53,12 @@ export function createD1ContentStatusStore(
              content_id,
              from_status,
              to_status,
-             created_at
+             created_at,
+             note
            )
-           VALUES (?1, ?2, ?3, ?4)`
+           VALUES (?1, ?2, ?3, ?4, ?5)`
         )
-        .bind(id, from, status, now)
+        .bind(id, from, status, now, note)
         .run();
 
       return true;

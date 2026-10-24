@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { changeContentStatus } from "./change-content-status";
+import { changeContentStatus, readStatusNote } from "./change-content-status";
 import type {
   ContentStatusRecord,
   ContentStatusStore
@@ -15,25 +15,29 @@ function memoryStore(
     from: ContentStatus;
     status: ContentStatus;
   }>;
+  notes: Array<string | null>;
 } {
   const saved: Array<{
     id: string;
     from: ContentStatus;
     status: ContentStatus;
   }> = [];
+  const notes: Array<string | null> = [];
 
   return {
     saved,
+    notes,
     async find(id) {
       return rows[id] ?? null;
     },
-    async save(id, from, status, publishedAt) {
+    async save(id, from, status, publishedAt, _now, note) {
       const row = rows[id];
 
       if (!row || row.status !== from) return false;
 
       rows[id] = { status, publishedAt };
       saved.push({ id, from, status });
+      notes.push(note);
       return true;
     }
   };
@@ -130,5 +134,37 @@ describe("Change content status", () => {
     );
 
     expect(result).toEqual({ ok: false, reason: "missing" });
+  });
+
+  it("keeps a note only when rejecting", async () => {
+    const store = memoryStore({
+      a: { status: "draft", publishedAt: null },
+      b: { status: "draft", publishedAt: null }
+    });
+
+    await changeContentStatus(store, "a", "archived", 100, "Trùng bài cũ");
+    await changeContentStatus(store, "b", "published", 100, "Bị bỏ qua");
+
+    expect(store.notes).toEqual(["Trùng bài cũ", null]);
+  });
+});
+
+describe("readStatusNote", () => {
+  it("treats missing or blank notes as no note", () => {
+    expect(readStatusNote(undefined)).toEqual({ ok: true, note: null });
+    expect(readStatusNote(null)).toEqual({ ok: true, note: null });
+    expect(readStatusNote("   ")).toEqual({ ok: true, note: null });
+  });
+
+  it("collapses whitespace", () => {
+    expect(readStatusNote("  Nội dung\n\nchưa rõ  ")).toEqual({
+      ok: true,
+      note: "Nội dung chưa rõ"
+    });
+  });
+
+  it("rejects long or non-text notes", () => {
+    expect(readStatusNote("a".repeat(301))).toEqual({ ok: false });
+    expect(readStatusNote(5)).toEqual({ ok: false });
   });
 });

@@ -593,7 +593,8 @@ function childStatements(
 export async function createAdminContent(
   db: D1Database,
   draft: ContentDraftInput,
-  now: number
+  now: number,
+  authorId: string | null = null
 ): Promise<AdminContent> {
   const id = createContentId();
   const slug = await nextSlug(db, draft.title, "");
@@ -606,11 +607,11 @@ export async function createAdminContent(
           `INSERT INTO contents (
              id, slug, kind, status, category, title, description, tag,
              theme, source_label, source_url, normalized_hash,
-             created_at, updated_at, published_at
+             created_at, updated_at, published_at, author_id
            )
            VALUES (
              ?1, ?2, ?3, 'draft', ?4, ?5, ?6, ?7,
-             ?8, ?9, ?10, ?11, ?12, ?12, NULL
+             ?8, ?9, ?10, ?11, ?12, ?12, NULL, ?13
            )`
         )
         .bind(
@@ -625,7 +626,8 @@ export async function createAdminContent(
           draft.sourceLabel || null,
           draft.sourceUrl || null,
           hash,
-          now
+          now,
+          authorId
         ),
       ...childStatements(db, id, draft)
     ]);
@@ -649,16 +651,25 @@ export async function createAdminContent(
   return created;
 }
 
+/** authorId: nguoi viet tu sua, chi duoc khi bai cua ho va con cho duyet. */
 export async function updateAdminContent(
   db: D1Database,
   id: string,
   draft: ContentDraftInput,
-  now: number
+  now: number,
+  authorId: string | null = null
 ): Promise<AdminContent> {
   const current = await getAdminContent(db, id);
 
   if (!current) {
     throw new AdminContentError(404, "Không tìm thấy bài.");
+  }
+
+  if (authorId && current.status !== "draft") {
+    throw new AdminContentError(
+      409,
+      "Bài đã được duyệt nên không sửa được nữa."
+    );
   }
 
   if (current.status === "archived") {
@@ -688,7 +699,8 @@ export async function updateAdminContent(
              normalized_hash = ?10,
              updated_at = ?11
          WHERE id = ?12
-           AND status != 'archived'`
+           AND status != 'archived'
+           AND (?13 IS NULL OR (author_id = ?13 AND status = 'draft'))`
       )
       .bind(
         slug,
@@ -702,7 +714,8 @@ export async function updateAdminContent(
         draft.sourceUrl || null,
         hash,
         now,
-        id
+        id,
+        authorId
       )
       .run();
   } catch (error) {
