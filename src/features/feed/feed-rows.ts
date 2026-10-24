@@ -43,7 +43,19 @@ export const CARD_COLUMNS = `
     FROM content_details d
     WHERE d.content_id = c.id
     LIMIT 1
-  ) AS has_article`;
+  ) AS has_article,
+  COALESCE(
+    (SELECT s.like_count FROM content_stats s WHERE s.content_id = c.id),
+    0
+  ) AS like_count,
+  COALESCE(
+    (SELECT s.save_count FROM content_stats s WHERE s.content_id = c.id),
+    0
+  ) AS save_count,
+  COALESCE(
+    (SELECT s.share_count FROM content_stats s WHERE s.content_id = c.id),
+    0
+  ) AS share_count`;
 
 export interface ContentRow {
   id: string;
@@ -62,6 +74,9 @@ export interface ContentRow {
   topics_json: string;
   moods_json: string;
   has_article: number | null;
+  like_count: number;
+  save_count: number;
+  share_count: number;
 }
 
 /** The kem khoa sap xep; khoa chi dung o server, khong gui xuong client. */
@@ -69,6 +84,11 @@ export interface RankedContent extends ContentItem {
   publishedAt: number;
   rankKey: number;
   seq: number;
+}
+
+function asCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 export function mapRow(row: ContentRow): RankedContent {
@@ -88,6 +108,9 @@ export function mapRow(row: ContentRow): RankedContent {
     topics: JSON.parse(row.topics_json ?? "[]") as ContentTopic[],
     suitableMoods: JSON.parse(row.moods_json ?? "[]") as ContentMood[],
     ...(hasArticle ? { hasArticle: true } : {}),
+    likeCount: asCount(row.like_count),
+    saveCount: asCount(row.save_count),
+    shareCount: asCount(row.share_count),
     publishedAt: row.published_at,
     rankKey: row.rank_key,
     seq: row.seq
@@ -108,6 +131,50 @@ export function toContentItem(row: RankedContent): ContentItem {
     theme: row.theme,
     topics: row.topics,
     suitableMoods: row.suitableMoods,
-    ...(row.hasArticle ? { hasArticle: true } : {})
+    ...(row.hasArticle ? { hasArticle: true } : {}),
+    likeCount: row.likeCount ?? 0,
+    saveCount: row.saveCount ?? 0,
+    shareCount: row.shareCount ?? 0,
+    ...(typeof row.liked === "boolean" ? { liked: row.liked } : {}),
+    ...(typeof row.saved === "boolean" ? { saved: row.saved } : {})
   };
+}
+
+/**
+ * Gan liked/saved cua ma dang xem vao tung the (mot truy van theo PRIMARY KEY).
+ * Khong co actor thi giu liked/saved = false (khong gui xuong client).
+ */
+export async function attachViewerReactions(
+  db: D1Database,
+  items: ContentItem[],
+  actorId: string | null
+): Promise<ContentItem[]> {
+  if (!actorId || items.length === 0) return items;
+
+  const slots = items.map((_, index) => `?${index + 2}`).join(", ");
+  const { results } = await db
+    .prepare(
+      `SELECT content_id, kind
+       FROM content_reactions
+       WHERE actor_id = ?1
+         AND kind IN ('like', 'save')
+         AND content_id IN (${slots})`
+    )
+    .bind(actorId, ...items.map((item) => item.id))
+    .all<{ content_id: string; kind: string }>();
+
+  const liked = new Set<string>();
+  const saved = new Set<string>();
+
+  for (const row of results) {
+    if (row.kind === "like") liked.add(row.content_id);
+    else if (row.kind === "save") saved.add(row.content_id);
+  }
+
+  // Luon gan boolean khi biet actor: client khoi can GET /reactions tung the.
+  return items.map((item) => ({
+    ...item,
+    liked: liked.has(item.id),
+    saved: saved.has(item.id)
+  }));
 }

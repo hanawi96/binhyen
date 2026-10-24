@@ -1,8 +1,21 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const COUNT = 10000;
 const RANK_KEY_MAX = 2147483647;
+const COUNT = readCount(20_000);
+
+function readCount(fallback) {
+  const arg = process.argv.find((item) => item.startsWith("--count="));
+  if (!arg) return fallback;
+
+  const value = Number(arg.slice("--count=".length));
+
+  if (!Number.isSafeInteger(value) || value < 1 || value > 200_000) {
+    throw new Error("--count phai la so nguyen 1..200000");
+  }
+
+  return value;
+}
 
 const topics = [
   "peace",
@@ -124,6 +137,9 @@ function seed(db) {
 }
 
 function removeBench(db) {
+  db.prepare(
+    `DELETE FROM content_reactions WHERE content_id GLOB 'bench[0-9]*'`
+  ).run();
   db.prepare(
     `DELETE FROM content_topics WHERE content_id GLOB 'bench[0-9]*'`
   ).run();

@@ -539,21 +539,70 @@ describe("loadPublicFeed trên SQL thật", () => {
     expect(MAX_SCAN_ROWS).toBeGreaterThanOrEqual(big.length);
   });
 
-  it("thẻ trả về đủ trường cho client, có format", async () => {
-    const { db } = setup(posts.slice(0, 3));
+  it("thẻ trả về đủ trường cho client, có format và số đếm", async () => {
+    const { db, sqlite } = setup(posts.slice(0, 3));
+    const first = posts[0]?.id ?? "p0001";
+
+    sqlite
+      .prepare(
+        `INSERT INTO content_stats (content_id, like_count, save_count, share_count)
+         VALUES (?, 12, 3, 7)`
+      )
+      .run(first);
+
     const page = await loadPublicFeed(db, {
       topic: "all",
       mood: "all",
       cursor: null,
-      limit: 3
+      limit: 3,
+      origin: () => 0
     });
-    const item = page.items[0];
+    const item = page.items.find((entry) => entry.id === first) ?? page.items[0];
 
     expect(item).toMatchObject({ format: "text", status: "published" });
     expect(item?.topics.length).toBe(1);
     expect(item?.suitableMoods.length).toBe(1);
     expect(item).not.toHaveProperty("rankKey");
     expect(item).not.toHaveProperty("seq");
+    expect(item?.likeCount).toBe(12);
+    expect(item?.saveCount).toBe(3);
+    expect(item?.shareCount).toBe(7);
+    expect(item?.liked).toBeUndefined();
+    expect(item?.saved).toBeUndefined();
+  });
+
+  it("có mã ẩn danh: gắn liked/saved vào thẻ trong cùng trang", async () => {
+    const { db, sqlite } = setup(posts.slice(0, 5));
+    const actor = "CcCcCcCcCcCcCcCcCcCcCc";
+    const target = posts[0]?.id ?? "p0001";
+
+    sqlite.prepare(`INSERT INTO actors (id) VALUES (?)`).run(actor);
+    sqlite
+      .prepare(
+        `INSERT INTO content_reactions (content_id, actor_id, kind)
+         VALUES (?, ?, 'like'), (?, ?, 'save')`
+      )
+      .run(target, actor, target, actor);
+
+    const page = await loadPublicFeed(db, {
+      topic: "all",
+      mood: "all",
+      cursor: null,
+      limit: 5,
+      viewer: {
+        ...ANONYMOUS_VIEWER,
+        key: `a:${actor}`,
+        actorId: actor
+      },
+      origin: () => 0
+    });
+    const item = page.items.find((entry) => entry.id === target);
+
+    expect(item?.liked).toBe(true);
+    expect(item?.saved).toBe(true);
+    expect(page.items.every((entry) => typeof entry.liked === "boolean")).toBe(
+      true
+    );
   });
 
   it("pageCursor: trang đầu là cursor xuất phát, trang sau là cursor yêu cầu", async () => {

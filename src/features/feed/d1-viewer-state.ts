@@ -250,23 +250,29 @@ async function readSeenTargets(
   db: D1Database,
   ids: readonly string[]
 ): Promise<SeenTarget[]> {
+  // Chi loc theo id de dung PRIMARY KEY; status/seq loc o JS.
+  // Them status vao WHERE de SQLite doi sang idx_contents_public_feed (cham hon).
   const slots = ids.map((_, index) => `?${index + 1}`).join(", ");
   const { results } = await db
     .prepare(
-      `SELECT seq, published_at
+      `SELECT seq, published_at, status
        FROM contents
-       WHERE id IN (${slots})
-         AND status = 'published'
-         AND published_at IS NOT NULL
-         AND seq > 0`
+       WHERE id IN (${slots})`
     )
     .bind(...ids)
-    .all<{ seq: number; published_at: number }>();
+    .all<{ seq: number; published_at: number | null; status: string }>();
 
-  return results.map((row) => ({
-    seq: row.seq,
-    publishedAt: row.published_at
-  }));
+  return results
+    .filter(
+      (row) =>
+        row.status === "published" &&
+        row.published_at !== null &&
+        row.seq > 0
+    )
+    .map((row) => ({
+      seq: row.seq,
+      publishedAt: row.published_at as number
+    }));
 }
 
 /**

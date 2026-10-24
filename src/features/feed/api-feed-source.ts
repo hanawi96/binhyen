@@ -127,6 +127,13 @@ function isContent(value: unknown): value is ContentItem {
 
   const item = value as Record<string, unknown>;
 
+  const optionalCount = (value: unknown) =>
+    value === undefined ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0);
+
+  const optionalFlag = (value: unknown) =>
+    value === undefined || typeof value === "boolean";
+
   return (
     typeof item.id === "string" &&
     typeof item.slug === "string" &&
@@ -140,7 +147,12 @@ function isContent(value: unknown): value is ContentItem {
     Array.isArray(item.topics) &&
     item.topics.every((x) => typeof x === "string") &&
     Array.isArray(item.suitableMoods) &&
-    item.suitableMoods.every((x) => typeof x === "string")
+    item.suitableMoods.every((x) => typeof x === "string") &&
+    optionalCount(item.likeCount) &&
+    optionalCount(item.saveCount) &&
+    optionalCount(item.shareCount) &&
+    optionalFlag(item.liked) &&
+    optionalFlag(item.saved)
   );
 }
 

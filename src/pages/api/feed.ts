@@ -9,6 +9,7 @@ import {
   readFeedViewer,
   resetViewerLoop
 } from "../../features/feed/d1-viewer-state";
+import { attachViewerReactions } from "../../features/feed/feed-rows";
 import { loadLovedFeed } from "../../features/feed/load-loved-feed";
 import { loadPublicFeed } from "../../features/feed/load-public-feed";
 import { decodeLovedCursor } from "../../features/feed/loved-cursor";
@@ -96,13 +97,24 @@ export const GET: APIRoute = async ({ request }) => {
     }
 
     try {
+      const now = Math.floor(Date.now() / 1000);
+      const viewer = await readFeedViewer(
+        env.DB,
+        request.headers.get("cookie"),
+        now
+      );
       const page = await loadLovedFeed(env.DB, {
         cursor: rawCursor,
         limit
       });
+      const items = await attachViewerReactions(
+        env.DB,
+        page.items,
+        viewer.actorId
+      );
 
       return Response.json(
-        { success: true, ...page },
+        { success: true, ...page, items },
         {
           headers: {
             "Cache-Control": "no-store",

@@ -10,10 +10,6 @@ import {
   encodeLovedCursor
 } from "./loved-cursor";
 
-interface LovedRow extends ContentRow {
-  like_count: number;
-}
-
 /**
  * Muc "Yeu thich nhat": chi bai co it nhat mot luot thich.
  * CROSS JOIN giu content_stats o vong ngoai de SQLite di theo
@@ -32,9 +28,7 @@ export async function loadLovedFeed(
 
   const { results } = await db
     .prepare(
-      `SELECT
-         ${CARD_COLUMNS},
-         s.like_count
+      `SELECT ${CARD_COLUMNS}
        FROM content_stats s
        CROSS JOIN contents c ON c.id = s.content_id
        WHERE s.like_count > 0
@@ -49,13 +43,16 @@ export async function loadLovedFeed(
        LIMIT ?3`
     )
     .bind(cursor?.likeCount ?? null, cursor?.id ?? null, input.limit + 1)
-    .all<LovedRow>();
+    .all<ContentRow>();
 
   const rows = results.slice(0, input.limit);
   const last = rows[rows.length - 1];
   const nextCursor =
     results.length > input.limit && last
-      ? encodeLovedCursor({ likeCount: last.like_count, id: last.id })
+      ? encodeLovedCursor({
+          likeCount: Number(last.like_count) || 0,
+          id: last.id
+        })
       : null;
 
   return {

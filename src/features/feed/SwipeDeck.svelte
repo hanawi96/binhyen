@@ -181,7 +181,37 @@
     maximumFractionDigits: 1
   });
 
-  let reactions = $state<Record<string, Reaction>>({});
+  /** So dem (va liked/saved neu co) di kem feed — hien rail dung ngay, khong flash 0. */
+  function reactionFromItem(item: ContentItem): Reaction | null {
+    if (typeof item.likeCount !== "number") return null;
+
+    return {
+      liked: item.liked === true,
+      saved: item.saved === true,
+      likeCount: item.likeCount,
+      saveCount: typeof item.saveCount === "number" ? item.saveCount : 0,
+      shareCount: typeof item.shareCount === "number" ? item.shareCount : 0
+    };
+  }
+
+  function seedMap(items: readonly ContentItem[]): Record<string, Reaction> {
+    const out: Record<string, Reaction> = {};
+
+    for (const item of items) {
+      const seed = reactionFromItem(item);
+      if (seed) out[item.id] = seed;
+    }
+
+    return out;
+  }
+
+  let reactions = $state<Record<string, Reaction>>(seedMap(initialItems));
+  /** Da co trang thai ca nhan tu feed hoac GET /reactions. */
+  const personalReady = new Set(
+    initialItems
+      .filter((item) => typeof item.liked === "boolean")
+      .map((item) => item.id)
+  );
   let sharedId = $state<string | null>(null);
   let shareTimer = 0;
   let writeSerial = 0;
@@ -213,7 +243,7 @@
   };
 
   const RAIL_MS = 400;
-  /** Hien san 0 — tranh o trong roi nhay so khi load trang. */
+  /** Chi dung khi the chua co so dem trong feed. */
   const RAIL_PLACEHOLDER: RailStats = {
     likeText: "0",
     saveText: "0",
@@ -222,14 +252,28 @@
     saved: false
   };
 
-  let railShown = $state<RailStats>({ ...RAIL_PLACEHOLDER });
+  const firstSeed = initialItems[0]
+    ? reactionFromItem(initialItems[0])
+    : null;
+
+  let railShown = $state<RailStats>(
+    firstSeed
+      ? {
+          likeText: countFormat.format(firstSeed.likeCount),
+          saveText: countFormat.format(firstSeed.saveCount),
+          shareText: countFormat.format(firstSeed.shareCount),
+          liked: firstSeed.liked,
+          saved: firstSeed.saved
+        }
+      : { ...RAIL_PLACEHOLDER }
+  );
   let railEnter = $state<RailStats | null>(null);
   let railDir = $state<1 | -1>(1);
   let railMoving = $state(false);
   let railTimer = 0;
-  let railCardId: string | null = null;
+  let railCardId: string | null = firstSeed && initialItems[0] ? initialItems[0].id : null;
   let railIndex = 0;
-  let railPrimed = $state(false);
+  let railPrimed = $state(firstSeed !== null);
 
   let railView = $derived(
     railMoving && railEnter ? railEnter : railShown
@@ -586,6 +630,7 @@
   function resetReactions() {
     reactionEpoch += 1;
     reactions = {};
+    personalReady.clear();
     for (const id of Object.keys(lastWrite)) delete lastWrite[id];
     reactionLoads.clear();
     if (railTimer) {
@@ -669,11 +714,42 @@
     railIndex = index;
   });
 
-  // Bai dang xem: tai ngay. Bai vua vuot toi: doi 250ms tranh goi API khi luot nhanh.
+  // Gieo so dem tu trang feed moi (loadMore / doi muc).
+  $effect(() => {
+    for (const item of contents) {
+      if (personalReady.has(item.id) || item.id in lastWrite) continue;
+
+      const seed = reactionFromItem(item);
+      if (!seed) continue;
+
+      const existing = reactions[item.id];
+      if (
+        existing &&
+        existing.likeCount === seed.likeCount &&
+        existing.saveCount === seed.saveCount &&
+        existing.shareCount === seed.shareCount
+      ) {
+        if (typeof item.liked === "boolean") personalReady.add(item.id);
+        continue;
+      }
+
+      reactions[item.id] = existing
+        ? {
+            ...seed,
+            liked: existing.liked,
+            saved: existing.saved
+          }
+        : seed;
+
+      if (typeof item.liked === "boolean") personalReady.add(item.id);
+    }
+  });
+
+  // Chi GET /reactions khi feed chua mang liked/saved (vd. muc Yeu thich).
   $effect(() => {
     const id = activeItem?.id;
 
-    if (!id || reactions[id] || reactionLoads.has(id)) {
+    if (!id || personalReady.has(id) || reactionLoads.has(id)) {
       return;
     }
 
@@ -689,7 +765,9 @@
         .then((body: unknown) => {
           if (epoch !== reactionEpoch) return;
           const state = readReaction(body);
-          if (state && !(id in lastWrite)) reactions[id] = state;
+          if (!state || id in lastWrite) return;
+          reactions[id] = state;
+          personalReady.add(id);
         })
         .catch(() => undefined)
         .finally(() => {

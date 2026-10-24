@@ -164,6 +164,14 @@ export interface ContentItem {
   /** Co body dai trong content_details — bat nut Doc them. */
   hasArticle?: boolean;
 
+  /** So dem cong khai tu content_stats — gui kem feed de rail khong flash 0. */
+  likeCount?: number;
+  saveCount?: number;
+  shareCount?: number;
+  /** Trang thai cua ma an danh / tai khoan dang xem; chi co khi biet actor. */
+  liked?: boolean;
+  saved?: boolean;
+
   article?: ContentArticle;
   source?: ContentSource;
   /** Co khi format = image va da gan media. */

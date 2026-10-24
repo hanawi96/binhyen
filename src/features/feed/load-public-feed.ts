@@ -3,6 +3,7 @@ import type { MoodFilter, TopicFilter } from "../content/filter-contents";
 import { ANONYMOUS_VIEWER, type FeedViewer } from "./d1-viewer-state";
 import {
   CARD_COLUMNS,
+  attachViewerReactions,
   mapRow,
   toContentItem,
   type ContentRow,
@@ -473,8 +474,14 @@ export async function loadPublicFeed(
     matched = Number(value) === 1;
   }
 
+  const pageItems = await attachViewerReactions(
+    db,
+    items.map(toContentItem),
+    viewer.actorId
+  );
+
   return {
-    items: items.map(toContentItem),
+    items: pageItems,
     nextCursor: ended ? null : encodeRingCursor(cursor),
     hasMore: !ended,
     matched,

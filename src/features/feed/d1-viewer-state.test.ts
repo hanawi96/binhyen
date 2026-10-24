@@ -502,8 +502,7 @@ describe("recordSeen", () => {
         .join(" | ");
 
     const targets = plan(
-      `SELECT seq, published_at FROM contents
-       WHERE id IN ('a', 'b') AND status = 'published' AND published_at IS NOT NULL AND seq > 0`
+      `SELECT seq, published_at, status FROM contents WHERE id IN ('a', 'b')`
     );
     const kept = plan(
       `SELECT DISTINCT c.seq

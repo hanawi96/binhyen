@@ -18,6 +18,7 @@
     "seed:image": "node scripts/seed-demo-image.mjs",
     "seed:video": "node scripts/seed-demo-video.mjs",
     "measure:bench": "node scripts/measure-feed-bench.mjs",
+    "measure:bench:http": "node scripts/measure-feed-bench.mjs --http --crawl",
     "generate-types": "wrangler types"
   },
   "dependencies": {
