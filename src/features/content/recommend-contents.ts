@@ -65,12 +65,12 @@ function scoreCandidate(
   }
 
   if (previous) {
-    // Tranh hai the lien tiep co cung sac thai.
-    if (previous.theme === item.theme) {
+    // Tránh hai thẻ liền cùng chủ đề đầu.
+    if (previous.topics[0] && previous.topics[0] === item.topics[0]) {
       score -= 15;
     }
 
-    // Tranh lap lai cung loai noi dung.
+    // Tránh lặp lại cùng loại nội dung.
     if (previous.kind === item.kind) {
       score -= 10;
     }

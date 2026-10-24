@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AmbientTrackRow } from "../ambient/d1-ambient-tracks";
-  import AdminNav from "./AdminNav.svelte";
+  import AdminShell from "./AdminShell.svelte";
 
   interface Props {
     initialTracks: AmbientTrackRow[];
@@ -272,8 +272,7 @@
   }
 </script>
 
-<div class="shell">
-  <AdminNav current="ambient" onleave={leave} {pending} />
+<AdminShell current="ambient" onleave={leave} {pending}>
   <main class="main">
     <header class="head">
       <div>
@@ -465,15 +464,9 @@
       </section>
     </div>
   </main>
-</div>
+</AdminShell>
 
 <style>
-  .shell {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    min-height: 100vh;
-  }
-
   .main {
     display: grid;
     gap: var(--space-4);
@@ -878,19 +871,87 @@
     color: var(--color-text);
   }
 
-  @media (max-width: 1100px) {
+  @media (max-width: 1023px) {
+    .main {
+      gap: var(--space-4);
+      padding: var(--space-4);
+    }
+
+    .head {
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
     .workspace {
       grid-template-columns: 1fr;
+      gap: var(--space-4);
     }
 
     .upload-panel {
       position: static;
     }
+
+    .upload-panel,
+    .list-panel {
+      padding: var(--space-4);
+    }
   }
 
-  @media (max-width: 900px) {
-    .shell {
+  @media (max-width: 767px) {
+    .main {
+      padding: var(--space-3);
+    }
+
+    .head h1 {
+      font-size: 1.25rem;
+    }
+
+    .head p {
+      font-size: 0.82rem;
+    }
+
+    .upload-panel,
+    .list-panel {
+      padding: var(--space-3);
+      border-radius: var(--radius-lg);
+    }
+
+    .row-item {
+      padding: var(--space-3);
+    }
+
+    .meta audio {
+      max-width: 100%;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .actions button {
+      min-height: 2.5rem;
+      width: 100%;
+    }
+
+    .actions .danger {
+      grid-column: 1 / -1;
+    }
+
+    .rename {
+      display: grid;
       grid-template-columns: 1fr;
+    }
+
+    .rename input {
+      flex: none;
+      width: 100%;
+    }
+
+    .rename button {
+      min-height: 2.5rem;
+      width: 100%;
     }
   }
 </style>

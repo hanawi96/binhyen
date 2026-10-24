@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
 
+  import { catalogSlugFromLabel } from "./catalog";
   import type { CatalogEntry } from "./d1-catalog";
-  import AdminNav from "./AdminNav.svelte";
+  import AdminShell from "./AdminShell.svelte";
 
   interface Props {
     initialTopics: CatalogEntry[];
@@ -22,94 +23,29 @@
     null
   );
 
-  const looks: Record<
-    string,
-    { wash: string; ink: string; blurb: string; icon: IconName }
-  > = {
-    peace: {
-      wash: "var(--color-theme-peace)",
-      ink: "var(--color-accent-peace)",
-      blurb: "Một khoảng lặng cho tâm hồn.",
-      icon: "leaf"
-    },
-    stories: {
-      wash: "var(--color-theme-story)",
-      ink: "var(--color-accent-story)",
-      blurb: "Những câu chuyện ấm áp.",
-      icon: "book"
-    },
-    science: {
-      wash: "var(--color-theme-discovery)",
-      ink: "var(--color-accent-discovery)",
-      blurb: "Bất ngờ từ thế giới quanh ta.",
-      icon: "spark"
-    },
-    nature: {
-      wash: "var(--color-theme-nature)",
-      ink: "var(--color-accent-nature)",
-      blurb: "Vẻ đẹp rất đỗi diệu kỳ.",
-      icon: "sprout"
-    },
-    psychology: {
-      wash: "var(--color-theme-psychology)",
-      ink: "var(--color-accent-psychology)",
-      blurb: "Hiểu mình, hiểu người hơn.",
-      icon: "balance"
-    },
-    perspective: {
-      wash: "var(--wash-day)",
-      ink: "var(--ink-day)",
-      blurb: "Tìm vẻ đẹp trong điều giản dị.",
-      icon: "sun"
-    },
-    cute: {
-      wash: "var(--color-theme-cute)",
-      ink: "var(--color-accent-cute)",
-      blurb: "Những điều nhỏ làm ngày dịu lại.",
-      icon: "heart"
-    },
-    tips: {
-      wash: "var(--color-theme-nature)",
-      ink: "var(--color-accent-nature)",
-      blurb: "Một mẹo nhỏ, một ngày nhẹ hơn.",
-      icon: "bulb"
-    },
-    calm: {
-      wash: "var(--color-theme-peace)",
-      ink: "var(--color-accent-peace)",
-      blurb: "Khi lòng muốn được yên.",
-      icon: "leaf"
-    },
-    tired: {
-      wash: "var(--color-theme-story)",
-      ink: "var(--color-accent-story)",
-      blurb: "Một chỗ để nghỉ, không cần vội.",
-      icon: "moon"
-    },
-    stressed: {
-      wash: "var(--color-theme-cute)",
-      ink: "var(--color-accent-cute)",
-      blurb: "Thả bớt những gì đang siết.",
-      icon: "cloud"
-    },
-    sad: {
-      wash: "var(--color-theme-psychology)",
-      ink: "var(--color-accent-psychology)",
-      blurb: "Ở lại với nỗi buồn một lát.",
-      icon: "drop"
-    },
-    happy: {
-      wash: "var(--wash-day)",
-      ink: "var(--ink-day)",
-      blurb: "Giữ lấy niềm vui đang có.",
-      icon: "sun"
-    },
-    curious: {
-      wash: "var(--color-theme-discovery)",
-      ink: "var(--color-accent-discovery)",
-      blurb: "Một câu hỏi mở cho hôm nay.",
-      icon: "spark"
-    }
+  let createDialog = $state<HTMLDialogElement | null>(null);
+  let createLabel = $state("");
+  let createKind = $state<"topic" | "mood">("topic");
+  let creating = $state(false);
+  let createError = $state("");
+
+  let createSlugPreview = $derived(catalogSlugFromLabel(createLabel) ?? "");
+
+  const looks: Record<string, { blurb: string; icon: IconName }> = {
+    peace: { blurb: "Một khoảng lặng cho tâm hồn.", icon: "leaf" },
+    stories: { blurb: "Những câu chuyện ấm áp.", icon: "book" },
+    science: { blurb: "Bất ngờ từ thế giới quanh ta.", icon: "spark" },
+    nature: { blurb: "Vẻ đẹp rất đỗi diệu kỳ.", icon: "sprout" },
+    psychology: { blurb: "Hiểu mình, hiểu người hơn.", icon: "balance" },
+    perspective: { blurb: "Tìm vẻ đẹp trong điều giản dị.", icon: "sun" },
+    cute: { blurb: "Những điều nhỏ làm ngày dịu lại.", icon: "heart" },
+    tips: { blurb: "Một mẹo nhỏ, một ngày nhẹ hơn.", icon: "bulb" },
+    calm: { blurb: "Khi lòng muốn được yên.", icon: "leaf" },
+    tired: { blurb: "Một chỗ để nghỉ, không cần vội.", icon: "moon" },
+    stressed: { blurb: "Thả bớt những gì đang siết.", icon: "cloud" },
+    sad: { blurb: "Ở lại với nỗi buồn một lát.", icon: "drop" },
+    happy: { blurb: "Giữ lấy niềm vui đang có.", icon: "sun" },
+    curious: { blurb: "Một câu hỏi mở cho hôm nay.", icon: "spark" }
   };
 
   type IconName =
@@ -129,8 +65,6 @@
   function lookFor(slug: string) {
     return (
       looks[slug] ?? {
-        wash: "var(--color-surface-soft)",
-        ink: "var(--color-text)",
         blurb: "Mục trong danh mục.",
         icon: "spark" as const
       }
@@ -206,6 +140,90 @@
     if (!confirmDiscard()) return;
     editing = null;
     notice = null;
+  }
+
+  function openCreate() {
+    if (!confirmDiscard()) return;
+    editing = null;
+    createLabel = "";
+    createKind = "topic";
+    createError = "";
+    createDialog?.showModal();
+  }
+
+  function closeCreate() {
+    if (creating) return;
+    createDialog?.close();
+    createError = "";
+  }
+
+  async function submitCreate() {
+    if (creating) return;
+    const label = createLabel.trim();
+    if (!label) {
+      createError = "Hãy nhập tên.";
+      return;
+    }
+
+    creating = true;
+    createError = "";
+
+    try {
+      const response = await fetch("/api/admin/catalog", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: createKind, label })
+      });
+      const body: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401) {
+        window.location.replace("/admin/login");
+        return;
+      }
+
+      if (!response.ok) {
+        createError =
+          body &&
+          typeof body === "object" &&
+          "error" in body &&
+          typeof body.error === "string"
+            ? body.error
+            : "Không tạo được.";
+        return;
+      }
+
+      const saved =
+        body &&
+        typeof body === "object" &&
+        "item" in body &&
+        body.item &&
+        typeof body.item === "object"
+          ? (body.item as CatalogEntry)
+          : null;
+
+      if (!saved?.slug) {
+        createError = "Phản hồi không hợp lệ.";
+        return;
+      }
+
+      const entry = copyEntry(saved);
+      if (createKind === "topic") {
+        topics = [...topics, entry].sort(
+          (a, b) => a.sortOrder - b.sortOrder || a.slug.localeCompare(b.slug)
+        );
+      } else {
+        moods = [...moods, entry].sort(
+          (a, b) => a.sortOrder - b.sortOrder || a.slug.localeCompare(b.slug)
+        );
+      }
+
+      createDialog?.close();
+      notice = { slug: entry.slug, tone: "ok", text: "Đã thêm." };
+    } catch {
+      createError = "Không có kết nối.";
+    } finally {
+      creating = false;
+    }
   }
 
   async function save() {
@@ -288,24 +306,98 @@
   }
 </script>
 
-<div class="desk">
-  <div class="shell">
-    <AdminNav current="catalog" onleave={leave} {pending} />
-    <main class="main">
-      <header class="page-head">
-        <div>
-          <h1>Chủ đề &amp; tâm trạng</h1>
-          <p>
-            Mỗi mục là một thẻ. Bấm mũi tên để đổi tên hiển thị hoặc thứ tự. Mã giữ nguyên.
-          </p>
-        </div>
-      </header>
+<AdminShell current="catalog" onleave={leave} {pending}>
+  <main class="main">
+    <header class="page-head">
+      <div>
+        <h1>Chủ đề &amp; tâm trạng</h1>
+        <p>
+          Mỗi mục là một thẻ. Bấm mũi tên để đổi tên hoặc thứ tự. Thêm mục mới bằng nút
+          Thêm.
+        </p>
+      </div>
+      <button type="button" class="add-btn" onclick={openCreate}>
+        + Thêm
+      </button>
+    </header>
 
-      {@render catalogCards("Chủ đề", "topic-heading", "topic", topics)}
-      {@render catalogCards("Tâm trạng", "mood-heading", "mood", moods)}
-    </main>
-  </div>
-</div>
+    {@render catalogCards("Chủ đề", "topic-heading", "topic", topics)}
+    {@render catalogCards("Tâm trạng", "mood-heading", "mood", moods)}
+  </main>
+</AdminShell>
+
+<dialog
+  class="create-dialog"
+  bind:this={createDialog}
+  aria-labelledby="create-catalog-title"
+  onclose={() => {
+    createError = "";
+  }}
+>
+  <form
+    class="create-sheet"
+    onsubmit={(event) => {
+      event.preventDefault();
+      void submitCreate();
+    }}
+  >
+    <header class="create-head">
+      <h2 id="create-catalog-title">Thêm mục</h2>
+      <button type="button" class="quiet" disabled={creating} onclick={closeCreate}>
+        Đóng
+      </button>
+    </header>
+
+    <label class="field">
+      <span>Tên</span>
+      <input
+        maxlength="48"
+        placeholder="Ví dụ: Bình yên buổi sáng"
+        bind:value={createLabel}
+        disabled={creating}
+        required
+      />
+    </label>
+    {#if createSlugPreview}
+      <p class="slug-hint">Mã: <code>{createSlugPreview}</code></p>
+    {/if}
+
+    <p class="field-label" id="create-kind-label">Loại</p>
+    <div class="kind-chips" role="group" aria-labelledby="create-kind-label">
+      <button
+        type="button"
+        class="chip"
+        aria-pressed={createKind === "topic"}
+        disabled={creating}
+        onclick={() => (createKind = "topic")}
+      >
+        Chủ đề
+      </button>
+      <button
+        type="button"
+        class="chip"
+        aria-pressed={createKind === "mood"}
+        disabled={creating}
+        onclick={() => (createKind = "mood")}
+      >
+        Tâm trạng
+      </button>
+    </div>
+
+    {#if createError}
+      <p class="create-error" role="alert">{createError}</p>
+    {/if}
+
+    <footer class="create-actions">
+      <button type="button" class="quiet" disabled={creating} onclick={closeCreate}>
+        Hủy
+      </button>
+      <button type="submit" class="primary" disabled={creating}>
+        {creating ? "Đang lưu…" : "Lưu"}
+      </button>
+    </footer>
+  </form>
+</dialog>
 
 {#snippet catalogCards(
   title: string,
@@ -325,11 +417,7 @@
         {#each items as item (item.slug)}
           {@const open = editing?.kind === kind && editing.slug === item.slug}
           {@const look = lookFor(item.slug)}
-          <li
-            class:open
-            style:--wash={look.wash}
-            style:--ink={look.ink}
-          >
+          <li class:open>
             <div class="card-head">
               <span class="mark">{@render glyph(look.icon)}</span>
               {#if open}
@@ -450,18 +538,6 @@
 {/snippet}
 
 <style>
-  .desk {
-    min-height: 100vh;
-    color: var(--color-text);
-    background: var(--color-background);
-  }
-
-  .shell {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
-    min-height: 100vh;
-  }
-
   .main {
     display: grid;
     align-content: start;
@@ -492,8 +568,114 @@
     font-size: var(--text-sm);
   }
 
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
   .page-head p {
     margin-top: var(--space-2);
+  }
+
+  .add-btn {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .create-dialog {
+    width: min(420px, calc(100vw - 1.5rem));
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-background);
+    color: var(--color-text);
+  }
+
+  .create-dialog::backdrop {
+    background: color-mix(in oklab, #0a100c 52%, transparent);
+    backdrop-filter: blur(5px);
+  }
+
+  :global(html[data-theme="dark"]) .create-dialog::backdrop {
+    background: color-mix(in oklab, #020403 78%, transparent);
+  }
+
+  .create-sheet {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-5);
+  }
+
+  .create-head,
+  .create-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .create-actions {
+    justify-content: flex-end;
+    margin-top: var(--space-2);
+  }
+
+  .slug-hint {
+    margin: -0.35rem 0 0;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+  }
+
+  .slug-hint code {
+    font-family: var(--font-body);
+    font-weight: 650;
+  }
+
+  .field-label {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+
+  .kind-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .chip {
+    min-height: 36px;
+    padding: 0 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .chip[aria-pressed="true"] {
+    border-color: transparent;
+    background: var(--color-theme-peace);
+    color: var(--color-accent-peace);
+    font-weight: 650;
+  }
+
+  .create-error {
+    margin: 0;
+    color: var(--color-error);
+    font-size: var(--text-sm);
   }
 
   .panel {
@@ -534,14 +716,14 @@
     gap: var(--space-8);
     min-height: 230px;
     padding: var(--space-5);
-    border: 1px solid transparent;
+    border: 1px solid var(--color-border);
     border-radius: 1.35rem;
-    background: var(--wash);
-    color: var(--ink);
+    background: var(--color-surface);
+    color: var(--color-text);
   }
 
   .cards li.open {
-    border-color: color-mix(in srgb, var(--ink) 35%, transparent);
+    border-color: color-mix(in oklab, var(--color-primary) 45%, transparent);
   }
 
   .card-head,
@@ -558,7 +740,7 @@
     place-items: center;
     width: 36px;
     height: 36px;
-    color: var(--ink);
+    color: var(--color-primary);
   }
 
   .mark svg,
@@ -605,7 +787,7 @@
 
   .blurb {
     margin: var(--space-2) 0 0;
-    color: color-mix(in srgb, var(--ink) 78%, white);
+    color: var(--color-text-secondary);
     font-size: var(--text-sm);
     line-height: 1.45;
   }
@@ -623,7 +805,7 @@
   }
 
   .meta dt {
-    color: color-mix(in srgb, var(--ink) 62%, white);
+    color: var(--color-text-secondary);
     font-size: var(--text-xs);
   }
 
@@ -645,9 +827,9 @@
   input {
     width: 100%;
     padding: var(--space-2) var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--ink) 25%, white);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    background: var(--color-surface);
+    background: var(--color-background);
     color: var(--color-text);
     font-weight: 500;
   }
@@ -656,7 +838,7 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--ink);
+    color: var(--color-text-secondary);
     font-size: var(--text-sm);
   }
 
@@ -665,7 +847,7 @@
     padding: 0 var(--space-4);
     border: 0;
     border-radius: var(--radius-full);
-    background: var(--ink);
+    background: var(--color-primary);
     color: var(--color-surface);
     font-size: var(--text-sm);
   }
@@ -683,7 +865,7 @@
   }
 
   .notice.ok {
-    color: var(--ink);
+    color: var(--color-success, var(--color-primary));
   }
 
   .notice.error {
@@ -701,15 +883,86 @@
     border: 0;
   }
 
-  @media (max-width: 900px) {
-    .shell {
+  @media (max-width: 1023px) {
+    .main {
+      gap: var(--space-4);
+      padding: var(--space-4);
+    }
+
+    .page-head {
+      display: grid;
       grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+
+    .add-btn {
+      justify-self: stretch;
+      min-height: 2.75rem;
+      width: 100%;
+    }
+
+    .cards {
+      gap: var(--space-3);
     }
   }
 
-  @media (max-width: 680px) {
+  @media (max-width: 767px) {
+    .main {
+      padding: var(--space-3);
+    }
+
+    h1 {
+      font-size: 1.25rem;
+    }
+
     .cards {
       grid-template-columns: 1fr;
+      gap: var(--space-2);
+    }
+
+    .meta {
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-2) var(--space-3);
+    }
+
+    .meta > :last-child:nth-child(odd) {
+      grid-column: 1 / -1;
+    }
+
+    .create-dialog {
+      width: 100vw;
+      max-width: 100vw;
+      height: auto;
+      max-height: 100dvh;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      overflow: auto;
+    }
+
+    .create-sheet {
+      min-height: 100dvh;
+      padding: var(--space-4);
+      padding-top: max(var(--space-4), env(safe-area-inset-top));
+      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      box-sizing: border-box;
+    }
+
+    .create-actions {
+      position: sticky;
+      bottom: 0;
+      margin-top: auto;
+      padding-top: var(--space-3);
+      background: linear-gradient(
+        to top,
+        var(--color-background) 70%,
+        transparent
+      );
+    }
+
+    .create-actions .primary,
+    .create-actions .quiet {
+      min-height: 2.75rem;
     }
   }
 </style>

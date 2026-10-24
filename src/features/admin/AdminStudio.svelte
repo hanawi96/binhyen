@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
 
-  import AdminNav from "./AdminNav.svelte";
+  import AdminShell from "./AdminShell.svelte";
 
   import type {
     AdminCatalogItem,
@@ -12,15 +12,12 @@
   } from "./d1-admin-content";
   import {
     contentKinds,
-    contentMoods,
-    contentTopics,
     isContentKind,
     isContentTheme,
+    isContentTopic,
+    type ContentItem,
     type ContentKind,
-    type ContentMood,
-    type ContentStatus,
-    type ContentTheme,
-    type ContentTopic
+    type ContentStatus
   } from "../content/content.types";
   import { readContentFormat } from "../content/content-format";
   import {
@@ -30,7 +27,13 @@
     readUrlMediaSize,
     type MediaSize
   } from "../media/media-dimensions";
-  import { lookFromTopic } from "../content/topic-look";
+  import {
+    categoryForTopicSlug,
+    DEFAULT_CONTENT_THEME,
+    topicLabels
+  } from "../content/topic-look";
+  import { isCatalogSlug } from "./catalog";
+  import ContentCard from "../feed/ContentCard.svelte";
 
   const PAGE_SIZE = 12;
 
@@ -48,24 +51,6 @@
     draft: "Bản nháp",
     published: "Đã xuất bản",
     archived: "Lưu trữ"
-  };
-
-  const cardTones: Record<ContentTheme, { wash: string; ink: string }> = {
-    peace: { wash: "var(--color-theme-peace)", ink: "var(--color-accent-peace)" },
-    discovery: {
-      wash: "var(--color-theme-discovery)",
-      ink: "var(--color-accent-discovery)"
-    },
-    story: { wash: "var(--color-theme-story)", ink: "var(--color-accent-story)" },
-    nature: {
-      wash: "var(--color-theme-nature)",
-      ink: "var(--color-accent-nature)"
-    },
-    psychology: {
-      wash: "var(--color-theme-psychology)",
-      ink: "var(--color-accent-psychology)"
-    },
-    cute: { wash: "var(--color-theme-cute)", ink: "var(--color-accent-cute)" }
   };
 
   const reasonLabels: Record<ReviewReason, string> = {
@@ -88,8 +73,8 @@
   interface DraftForm {
     title: string;
     format: "text" | "image" | "video" | "poll";
-    topics: ContentTopic[];
-    moods: ContentMood[];
+    topics: string[];
+    moods: string[];
     sourceLabel: string;
     sourceUrl: string;
     body: string;
@@ -150,7 +135,7 @@
   let query = $state("");
   let statusFilter = $state<"all" | ContentStatus>("all");
   let kindFilter = $state<ContentKind | "">("");
-  let topicFilter = $state<ContentTopic | "">("");
+  let topicFilter = $state("");
   let sort = $state<"updated" | "created">("updated");
   let reviewOnly = $state(false);
   let items = $state(initialItems);
@@ -180,30 +165,89 @@
     null
   );
   let editor = $state<HTMLDialogElement | null>(null);
+  let editorPane = $state<"compose" | "preview">("compose");
+  let storyImageInput = $state<HTMLInputElement | null>(null);
+  let storyUrlOpen = $state(false);
 
   let listTicket = 0;
   let detailTicket = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-  let topicChoices = $derived(
-    topics.filter(
-      (item): item is { slug: ContentTopic; label: string } =>
-        (contentTopics as readonly string[]).includes(item.slug)
-    )
-  );
-  let moodChoices = $derived(
-    moods.filter(
-      (item): item is { slug: ContentMood; label: string } =>
-        (contentMoods as readonly string[]).includes(item.slug)
-    )
-  );
-  let previewLook = $derived(
-    form.topics[0] ? lookFromTopic(form.topics[0]) : null
-  );
-  let previewTheme = $derived(previewLook?.theme ?? "peace");
-  let previewCategory = $derived(
-    previewLook?.category ?? "Chọn chủ đề để xem nhóm"
-  );
+  let topicChoices = $derived(topics);
+  let moodChoices = $derived(moods);
+  /** Thẻ giống trang chủ — chỉ nội dung chính (ContentCard). */
+  let previewContent = $derived.by((): ContentItem => {
+    const topic = form.topics[0];
+    const resolvedFormat =
+      form.format === "video" || form.format === "poll"
+        ? form.format
+        : form.imageUrl.trim()
+          ? "image"
+          : "text";
+    const title =
+      form.title.trim() ||
+      (resolvedFormat === "video"
+        ? "Chú thích video"
+        : resolvedFormat === "poll"
+          ? "Câu hỏi khảo sát"
+          : "Câu chữ chính");
+    const width = Number(form.imageWidth);
+    const height = Number(form.imageHeight);
+    const mediaW =
+      Number.isFinite(width) && width > 0 ? Math.round(width) : null;
+    const mediaH =
+      Number.isFinite(height) && height > 0 ? Math.round(height) : null;
+    const url = form.imageUrl.trim();
+
+    const item: ContentItem = {
+      id: "preview",
+      slug: "preview",
+      format: resolvedFormat,
+      kind: "story",
+      status: "draft",
+      category: topic ? categoryForTopicSlug(topic) : "",
+      title,
+      description: "",
+      tag: "",
+      theme: DEFAULT_CONTENT_THEME,
+      topics: form.topics,
+      suitableMoods: form.moods,
+      topicLabel: topic
+        ? (isContentTopic(topic) ? topicLabels[topic] : null) ??
+          topics.find((item) => item.slug === topic)?.label ??
+          topic
+        : "",
+      hasArticle:
+        resolvedFormat !== "poll" && form.body.trim().length > 0
+    };
+
+    if (resolvedFormat === "image" && url) {
+      item.image = {
+        url,
+        alt: form.imageAlt.trim(),
+        width: mediaW,
+        height: mediaH
+      };
+    } else if (resolvedFormat === "video" && url) {
+      item.video = {
+        url,
+        alt: form.imageAlt.trim(),
+        poster: form.posterUrl.trim() || null,
+        width: mediaW,
+        height: mediaH
+      };
+    } else if (resolvedFormat === "poll") {
+      const options = form.pollOptions
+        .map((label, index) => ({
+          id: `preview-${index}`,
+          label: label.trim()
+        }))
+        .filter((option) => option.label);
+      if (options.length >= 2) item.pollOptions = options;
+    }
+
+    return item;
+  });
   let archived = $derived(content?.status === "archived");
   let dirty = $derived(formSnapshot(form) !== savedForm);
   let safeUrl = $derived.by(() => {
@@ -288,9 +332,8 @@
       theme,
       status,
       topics: row.topics.filter(
-        (topic): topic is ContentTopic =>
-          typeof topic === "string" &&
-          (contentTopics as readonly string[]).includes(topic)
+        (topic): topic is string =>
+          typeof topic === "string" && isCatalogSlug(topic)
       ),
       reviewReasons: row.reviewReasons.filter(isReason),
       createdAt,
@@ -339,9 +382,8 @@
       slug: row.slug,
       tag: row.tag,
       moods: row.moods.filter(
-        (mood): mood is ContentMood =>
-          typeof mood === "string" &&
-          (contentMoods as readonly string[]).includes(mood)
+        (mood): mood is string =>
+          typeof mood === "string" && isCatalogSlug(mood)
       ),
       sourceLabel: row.sourceLabel,
       sourceUrl: row.sourceUrl,
@@ -520,6 +562,9 @@
         form.posterUrl = row.url;
       } else {
         form.imageUrl = row.url;
+        if (form.format === "text" || form.format === "image") {
+          form.format = "image";
+        }
         sizeProbeTicket += 1;
         if (measured) applyMeasuredSize(measured);
         else clearMeasuredSize();
@@ -695,6 +740,7 @@
   }
 
   function showEditor() {
+    editorPane = "compose";
     queueMicrotask(() => {
       if (editor && !editor.open) editor.showModal();
     });
@@ -749,13 +795,10 @@
     const target = event.currentTarget;
     if (!(target instanceof HTMLSelectElement)) return;
     const next = target.value;
-    if (
-      next !== "" &&
-      !(contentTopics as readonly string[]).includes(next)
-    ) {
+    if (next !== "" && !isCatalogSlug(next)) {
       return;
     }
-    topicFilter = next as ContentTopic | "";
+    topicFilter = next;
     resetPages();
     void loadList();
   }
@@ -894,30 +937,24 @@
     if (saving || detailLoading || archived) return;
 
     if (!form.title.trim() || form.topics.length === 0) {
+      editorPane = "compose";
       notice = {
         tone: "error",
         text:
           form.format === "poll"
             ? "Hãy nhập câu hỏi và chọn ít nhất một chủ đề."
-            : form.format === "image"
-              ? "Hãy nhập chú thích và chọn ít nhất một chủ đề."
-              : form.format === "video"
-                ? "Hãy nhập chú thích video và chọn ít nhất một chủ đề."
-                : "Hãy nhập câu chữ chính và chọn ít nhất một chủ đề."
+            : form.format === "video"
+              ? "Hãy nhập chú thích video và chọn ít nhất một chủ đề."
+              : "Hãy nhập câu chữ chính và chọn ít nhất một chủ đề."
       };
       return;
     }
 
-    if (
-      (form.format === "image" || form.format === "video") &&
-      !form.imageUrl.trim()
-    ) {
+    if (form.format === "video" && !form.imageUrl.trim()) {
+      editorPane = "compose";
       notice = {
         tone: "error",
-        text:
-          form.format === "video"
-            ? "Hãy dán URL video hoặc tải tệp lên."
-            : "Hãy dán URL ảnh hoặc tải tệp lên."
+        text: "Hãy dán URL video hoặc tải tệp lên."
       };
       return;
     }
@@ -928,6 +965,7 @@
         .filter(Boolean);
 
       if (filled.length < 2 || filled.length > 4) {
+        editorPane = "compose";
         notice = {
           tone: "error",
           text: "Khảo sát cần 2 đến 4 đáp án."
@@ -937,6 +975,7 @@
     }
 
     if (form.sourceUrl.trim() && !safeUrl) {
+      editorPane = "compose";
       notice = {
         tone: "error",
         text: "Liên kết nguồn không hợp lệ."
@@ -958,6 +997,12 @@
           method: editing ? "PATCH" : "POST",
           body: JSON.stringify({
             ...form,
+            format:
+              form.format === "video" || form.format === "poll"
+                ? form.format
+                : form.imageUrl.trim()
+                  ? "image"
+                  : "text",
             imageWidth: form.imageWidth.trim() || null,
             imageHeight: form.imageHeight.trim() || null,
             pollOptions:
@@ -1089,23 +1134,64 @@
       : [...form.collectionIds, id];
   }
 
-  function toggleTopic(slug: ContentTopic) {
+  function toggleTopic(slug: string) {
     form.topics = form.topics.includes(slug)
       ? form.topics.filter((item) => item !== slug)
       : [...form.topics, slug];
   }
 
-  function toggleMood(slug: ContentMood) {
+  function toggleMood(slug: string) {
     form.moods = form.moods.includes(slug)
       ? form.moods.filter((item) => item !== slug)
       : [...form.moods, slug];
   }
 
-  function setFormat(next: "text" | "image" | "video" | "poll") {
-    form.format = next;
-    if (next === "poll" && form.pollOptions.length < 2) {
-      form.pollOptions = ["", ""];
+  /** Chữ + ảnh cùng một loại biên tập. */
+  const isStory = $derived(
+    form.format === "text" || form.format === "image"
+  );
+
+  function clearStoryImage() {
+    form.imageUrl = "";
+    form.imageAlt = "";
+    form.format = "text";
+    clearMeasuredSize();
+    storyUrlOpen = false;
+  }
+
+  function onStoryImageDrop(event: DragEvent) {
+    event.preventDefault();
+    if (mediaUploading || detailLoading || archived || saving) return;
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    void uploadMediaFile(file, "image", "main");
+  }
+
+  function setFormat(next: "text" | "video" | "poll") {
+    if (next === "text") {
+      if (form.format === "video") {
+        form.imageUrl = "";
+        form.imageAlt = "";
+        form.posterUrl = "";
+        clearMeasuredSize();
+      }
+      form.format = form.imageUrl.trim() ? "image" : "text";
+      return;
     }
+
+    if (next === "video") {
+      if (form.format !== "video") {
+        form.imageUrl = "";
+        form.imageAlt = "";
+        form.posterUrl = "";
+        clearMeasuredSize();
+      }
+      form.format = "video";
+      return;
+    }
+
+    form.format = "poll";
+    if (form.pollOptions.length < 2) form.pollOptions = ["", ""];
   }
 
   function setPollOption(index: number, value: string) {
@@ -1165,10 +1251,7 @@
   });
 </script>
 
-<div class="desk">
-  <div class="shell">
-      <AdminNav current="contents" onleave={leave} {pending} />
-
+<AdminShell current="contents" onleave={leave} {pending}>
       <main class="main">
         <header class="page-head">
           <div>
@@ -1287,8 +1370,7 @@
             <li class="empty">Không có bài nào khớp.</li>
           {:else}
             {#each items as item (item.id)}
-              {@const tone = cardTones[item.theme]}
-              <li style:--wash={tone.wash} style:--ink={tone.ink}>
+              <li>
                 <div class="content-top">
                   <span class="kind">{kindLabels[item.kind]}</span>
                   <div class="content-tools">
@@ -1358,7 +1440,7 @@
           </button>
         </div>
       </main>
-    </div>
+</AdminShell>
 
     <dialog
       class="editor"
@@ -1367,13 +1449,14 @@
       oncancel={onDialogCancel}
     >
       <form
+        class="editor-form"
         onsubmit={(event) => {
           event.preventDefault();
           void save(false);
         }}
       >
         <header class="editor-head">
-          <div>
+          <div class="editor-head-copy">
             <h2 id="editor-title">
               {content ? "Chỉnh sửa nội dung" : "Thêm nội dung"}
             </h2>
@@ -1385,7 +1468,7 @@
           </div>
           <button
             type="button"
-            class="text-button"
+            class="text-button editor-close"
             onclick={requestClose}
           >
             Đóng
@@ -1394,7 +1477,7 @@
 
         {#if notice}
           <p
-            class="notice"
+            class="notice editor-notice"
             class:error={notice.tone === "error"}
             class:ok={notice.tone === "ok"}
             role={notice.tone === "error" ? "alert" : "status"}
@@ -1403,8 +1486,46 @@
           </p>
         {/if}
 
-        <div class="editor-grid">
-          <fieldset disabled={detailLoading || archived || saving}>
+        <div
+          class="editor-tabs"
+          role="tablist"
+          aria-label="Chế độ biên tập"
+        >
+          <button
+            type="button"
+            class="editor-tab"
+            role="tab"
+            id="editor-tab-compose"
+            aria-controls="editor-compose"
+            aria-selected={editorPane === "compose"}
+            tabindex={editorPane === "compose" ? 0 : -1}
+            onclick={() => (editorPane = "compose")}
+          >
+            Soạn
+          </button>
+          <button
+            type="button"
+            class="editor-tab"
+            role="tab"
+            id="editor-tab-preview"
+            aria-controls="editor-preview"
+            aria-selected={editorPane === "preview"}
+            tabindex={editorPane === "preview" ? 0 : -1}
+            onclick={() => (editorPane = "preview")}
+          >
+            Xem trước
+          </button>
+        </div>
+
+        <div class="editor-body">
+        <div class="editor-grid" data-pane={editorPane}>
+          <fieldset
+            class="compose-pane"
+            id="editor-compose"
+            role="tabpanel"
+            aria-labelledby="editor-tab-compose"
+            disabled={detailLoading || archived || saving}
+          >
             {#if detailLoading}
               <p>Đang mở bài…</p>
             {/if}
@@ -1413,18 +1534,10 @@
               <button
                 type="button"
                 class="chip"
-                aria-pressed={form.format === "text"}
+                aria-pressed={isStory}
                 onclick={() => setFormat("text")}
               >
-                Chữ
-              </button>
-              <button
-                type="button"
-                class="chip"
-                aria-pressed={form.format === "image"}
-                onclick={() => setFormat("image")}
-              >
-                Ảnh
+                Bài viết
               </button>
               <button
                 type="button"
@@ -1446,11 +1559,9 @@
             <label>
               {form.format === "poll"
                 ? "Câu hỏi"
-                : form.format === "image"
-                  ? "Chú thích ảnh"
-                  : form.format === "video"
-                    ? "Chú thích video"
-                    : "Câu chữ chính"}
+                : form.format === "video"
+                  ? "Chú thích video"
+                  : "Câu chữ chính"}
               <textarea
                 rows="3"
                 maxlength="280"
@@ -1458,11 +1569,124 @@
                 required
               ></textarea>
             </label>
-            {#if form.format === "image" || form.format === "video"}
+            {#if isStory}
+              <div class="media-pane">
+                <p class="field-label">Ảnh minh họa</p>
+                <button
+                  type="button"
+                  class="media-drop"
+                  class:has-image={!!form.imageUrl.trim()}
+                  class:is-busy={mediaUploading}
+                  disabled={mediaUploading || detailLoading || archived || saving}
+                  onclick={() => storyImageInput?.click()}
+                  ondragover={(event) => event.preventDefault()}
+                  ondrop={onStoryImageDrop}
+                >
+                  {#if form.imageUrl.trim()}
+                    <img
+                      src={form.imageUrl.trim()}
+                      alt={form.imageAlt || form.title || "Ảnh bài viết"}
+                    />
+                    <span class="media-drop-badge">
+                      {mediaUploading ? "Đang tải…" : "Đổi ảnh"}
+                    </span>
+                  {:else}
+                    <span class="media-drop-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M4.5 15.75 9 11.25l3.75 3.75L18 9.75l1.5 1.5"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25v10.5A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25V6.75Z"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <strong>
+                      {mediaUploading ? "Đang tải lên…" : "Kéo thả hoặc chọn ảnh"}
+                    </strong>
+                    <span>JPEG, PNG, WebP · tối đa 2 MB · tuỳ chọn</span>
+                  {/if}
+                </button>
+                <input
+                  bind:this={storyImageInput}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  disabled={mediaUploading || detailLoading || archived || saving}
+                  onchange={(event) => onMediaPicked(event, "image", "main")}
+                />
+
+                {#if form.imageUrl.trim()}
+                  <div class="media-toolbar">
+                    <button
+                      type="button"
+                      class="chip"
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      onclick={() => storyImageInput?.click()}
+                    >
+                      Đổi ảnh
+                    </button>
+                    <button
+                      type="button"
+                      class="chip"
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      onclick={clearStoryImage}
+                    >
+                      Gỡ ảnh
+                    </button>
+                    {#if measuredHint}
+                      <span class="media-meta">{measuredHint}</span>
+                    {:else if mediaMeasuring}
+                      <span class="media-meta">Đang đo tỉ lệ…</span>
+                    {/if}
+                  </div>
+                  <label>
+                    Mô tả ảnh (alt)
+                    <input
+                      maxlength="200"
+                      placeholder="Mô tả ngắn cho ảnh"
+                      bind:value={form.imageAlt}
+                    />
+                  </label>
+                {/if}
+
+                <div class="media-url">
+                  <button
+                    type="button"
+                    class="media-url-toggle"
+                    aria-expanded={storyUrlOpen}
+                    onclick={() => (storyUrlOpen = !storyUrlOpen)}
+                  >
+                    {storyUrlOpen ? "Ẩn dán URL" : "Hoặc dán URL ảnh"}
+                  </button>
+                  {#if storyUrlOpen}
+                    <input
+                      maxlength="500"
+                      placeholder="https://… hoặc /api/media/…"
+                      value={form.imageUrl}
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      oninput={(event) => {
+                        const target = event.currentTarget;
+                        if (!(target instanceof HTMLInputElement)) return;
+                        form.imageUrl = target.value;
+                        form.format = target.value.trim() ? "image" : "text";
+                        scheduleProbeMediaUrl(target.value, "image");
+                      }}
+                    />
+                  {/if}
+                </div>
+              </div>
+            {:else if form.format === "video"}
               <label>
-                {form.format === "video"
-                  ? "URL / đường dẫn video"
-                  : "URL / đường dẫn ảnh"}
+                URL / đường dẫn video
                 <input
                   maxlength="500"
                   placeholder="https://… hoặc /api/media/…"
@@ -1471,69 +1695,54 @@
                     const target = event.currentTarget;
                     if (!(target instanceof HTMLInputElement)) return;
                     form.imageUrl = target.value;
-                    scheduleProbeMediaUrl(
-                      target.value,
-                      form.format === "video" ? "video" : "image"
-                    );
+                    scheduleProbeMediaUrl(target.value, "video");
                   }}
                 />
               </label>
               <label class="file-pick">
-                {form.format === "video" ? "Hoặc tải video lên" : "Hoặc tải ảnh lên"}
+                Hoặc tải video lên
                 <input
                   type="file"
-                  accept={form.format === "video"
-                    ? "video/mp4,video/webm"
-                    : "image/jpeg,image/png,image/webp"}
+                  accept="video/mp4,video/webm"
                   disabled={mediaUploading || detailLoading || archived || saving}
-                  onchange={(event) =>
-                    onMediaPicked(
-                      event,
-                      form.format === "video" ? "video" : "image",
-                      "main"
-                    )}
+                  onchange={(event) => onMediaPicked(event, "video", "main")}
                 />
               </label>
               <label>
-                {form.format === "video" ? "Mô tả video" : "Mô tả ảnh (alt)"}
+                Mô tả video
                 <input maxlength="200" bind:value={form.imageAlt} />
               </label>
-              {#if form.format === "video"}
-                <label>
-                  Ảnh xem trước (tuỳ chọn)
-                  <input
-                    maxlength="500"
-                    placeholder="https://… hoặc /api/media/…"
-                    bind:value={form.posterUrl}
-                  />
-                </label>
-                <label class="file-pick">
-                  Hoặc tải ảnh xem trước
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    disabled={mediaUploading || detailLoading || archived || saving}
-                    onchange={(event) =>
-                      onMediaPicked(event, "image", "poster")}
-                  />
-                </label>
-              {/if}
+              <label>
+                Ảnh xem trước (tuỳ chọn)
+                <input
+                  maxlength="500"
+                  placeholder="https://… hoặc /api/media/…"
+                  bind:value={form.posterUrl}
+                />
+              </label>
+              <label class="file-pick">
+                Hoặc tải ảnh xem trước
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={mediaUploading || detailLoading || archived || saving}
+                  onchange={(event) =>
+                    onMediaPicked(event, "image", "poster")}
+                />
+              </label>
               {#if measuredHint}
                 <p class="hint">{measuredHint}</p>
               {:else if mediaMeasuring}
                 <p class="hint">Đang đo tỉ lệ media…</p>
               {:else}
                 <p class="hint">
-                  Tỉ lệ khung được đo tự động khi tải tệp hoặc dán URL (nếu trình
-                  duyệt đọc được metadata).
+                  Tỉ lệ khung được đo tự động khi tải tệp hoặc dán URL.
                 </p>
               {/if}
               <p class="hint">
                 {mediaUploading
                   ? "Đang tải lên kho media…"
-                  : form.format === "video"
-                    ? "Video chỉ tải khi bấm phát. Có thể dán URL HTTPS hoặc tải lên R2 (tối đa 16 MB)."
-                    : "Có thể dán URL HTTPS hoặc tải lên R2 (JPEG/PNG/WebP, tối đa 2 MB)."}
+                  : "Video chỉ tải khi bấm phát. HTTPS hoặc R2 (tối đa 16 MB)."}
               </p>
             {/if}
             {#if form.format === "poll"}
@@ -1620,12 +1829,13 @@
               </div>
               <p class="hint">Có thể gắn một bài vào nhiều bộ.</p>
             {/if}
-            {#if form.format === "text"}
+            {#if isStory || form.format === "video"}
               <label>
-                Nội dung dài, Markdown
+                Nội dung bài viết (Markdown, tùy chọn)
                 <textarea
                   rows="6"
                   maxlength="8000"
+                  placeholder="Viết thêm để hiện nút Đọc thêm trên thẻ…"
                   bind:value={form.body}
                 ></textarea>
               </label>
@@ -1653,90 +1863,72 @@
             {/if}
           </fieldset>
 
-          <aside class="preview" aria-label="Xem trước thẻ">
-            <p class="field-label">Xem trước</p>
-            <article class="preview-card" data-theme={previewTheme}>
-              <header>
-                <span>{previewCategory}</span>
-                <span aria-hidden="true">✦</span>
-              </header>
-              <div>
-                <span class="mark" aria-hidden="true">“</span>
-                <h3>
-                  {form.title.trim() ||
-                    (form.format === "image"
-                      ? "Chú thích ảnh"
-                      : form.format === "video"
-                        ? "Chú thích video"
-                        : "Câu chữ chính")}
-                </h3>
+          <aside
+            class="preview"
+            id="editor-preview"
+            role="tabpanel"
+            aria-labelledby="editor-tab-preview"
+            aria-label="Xem trước thẻ"
+          >
+            <p class="field-label preview-caption">
+              Xem trước · màn điện thoại
+            </p>
+            <div class="preview-phone">
+              <div class="preview-stage">
+                <ContentCard content={previewContent} active={false} />
               </div>
-              {#if (form.format === "image" || form.format === "video") &&
-                form.imageUrl.trim()}
-                <p class="hint">{form.imageUrl.trim()}</p>
-              {/if}
-            </article>
-            {#if form.body.trim()}
-              <pre class="body-preview">{form.body}</pre>
-            {/if}
-            {#if safeUrl}
-              <a href={safeUrl} target="_blank" rel="noreferrer">
-                {form.sourceLabel.trim() || safeUrl}
-              </a>
-            {/if}
+            </div>
           </aside>
+        </div>
         </div>
 
         <footer class="editor-actions">
-          <button
-            type="submit"
-            disabled={saving || detailLoading || archived}
-          >
-            {saving
-              ? "Đang lưu…"
-              : content?.status === "published"
-                ? "Lưu thay đổi"
-                : "Lưu bản nháp"}
-          </button>
-          <button
-            class="primary"
-            type="button"
-            disabled={saving || detailLoading || archived}
-            onclick={() => save(true)}
-          >
-            Xuất bản
-          </button>
-          {#if content?.status === "published"}
+          <div class="editor-actions-main">
             <button
-              type="button"
-              disabled={saving || detailLoading}
-              onclick={unpublish}
+              type="submit"
+              disabled={saving || detailLoading || archived}
             >
-              Gỡ xuất bản
+              {saving
+                ? "Đang lưu…"
+                : content?.status === "published"
+                  ? "Lưu thay đổi"
+                  : "Lưu bản nháp"}
             </button>
-          {/if}
-          {#if content && !archived}
             <button
+              class="primary"
               type="button"
-              class="quiet"
-              disabled={saving || detailLoading}
-              onclick={archive}
+              disabled={saving || detailLoading || archived}
+              onclick={() => save(true)}
             >
-              {confirmArchive ? "Xác nhận lưu trữ" : "Lưu trữ"}
+              Xuất bản
             </button>
-          {/if}
+          </div>
+          <div class="editor-actions-more">
+            {#if content?.status === "published"}
+              <button
+                type="button"
+                disabled={saving || detailLoading}
+                onclick={unpublish}
+              >
+                Gỡ xuất bản
+              </button>
+            {/if}
+            {#if content && !archived}
+              <button
+                type="button"
+                class="quiet"
+                disabled={saving || detailLoading}
+                onclick={archive}
+              >
+                {confirmArchive ? "Xác nhận lưu trữ" : "Lưu trữ"}
+              </button>
+            {/if}
+          </div>
         </footer>
       </form>
     </dialog>
-</div>
 
 <style>
-  .desk {
-    min-height: 100vh;
-    color: var(--color-text);
-    background: var(--color-background);
-  }
-
   h1,
   h2,
   h3 {
@@ -1760,12 +1952,6 @@
     line-height: 1.5;
   }
 
-  .shell {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
-    min-height: 100vh;
-  }
-
   .text-button,
   .quiet {
     padding: 0;
@@ -1778,16 +1964,21 @@
   .main {
     display: grid;
     align-content: start;
-    gap: var(--space-4);
+    gap: var(--space-5);
     min-width: 0;
     padding: var(--space-6);
   }
 
   .page-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-4);
+  }
+
+  .page-head > div {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .add-content {
@@ -1839,6 +2030,7 @@
   .stat {
     display: grid;
     gap: var(--space-1);
+    align-content: center;
     min-height: 92px;
     padding: var(--space-4);
     border: 1px solid transparent;
@@ -1846,6 +2038,7 @@
     background: var(--color-surface);
     color: var(--color-text);
     text-align: left;
+    cursor: pointer;
   }
 
   .stat:nth-child(2) {
@@ -1881,12 +2074,34 @@
   .tabs,
   .toolbar,
   .pager,
-  .editor-actions,
   .chips,
   .split {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+  }
+
+  .editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .editor-actions-main,
+  .editor-actions-more {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .editor-actions-more {
+    margin-left: auto;
+  }
+
+  .editor-tabs {
+    display: none;
   }
 
   .poll-edit {
@@ -1906,14 +2121,17 @@
 
   .tabs button,
   .pager button,
-  .editor-actions button,
-  .chip {
+  .editor-actions button:not(.quiet),
+  .chip,
+  .editor-tab {
     min-height: 40px;
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-full);
     background: var(--color-surface);
     color: var(--color-text);
+    font: inherit;
+    cursor: pointer;
   }
 
   .tabs button[aria-selected="true"],
@@ -1979,9 +2197,10 @@
     gap: var(--space-3);
     min-height: 220px;
     padding: var(--space-5);
+    border: 1px solid var(--color-border);
     border-radius: 1.35rem;
-    background: var(--wash);
-    color: var(--ink);
+    background: var(--color-surface);
+    color: var(--color-text);
   }
 
   .content-cards > .empty {
@@ -2020,8 +2239,8 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--ink);
-    opacity: 0.55;
+    color: var(--color-text-secondary);
+    opacity: 0.75;
   }
 
   .open-card svg {
@@ -2056,7 +2275,7 @@
   .excerpt {
     margin: 0;
     overflow: hidden;
-    color: color-mix(in srgb, var(--ink) 78%, white);
+    color: var(--color-text-secondary);
     font-size: var(--text-sm);
     line-height: 1.45;
     display: -webkit-box;
@@ -2072,8 +2291,8 @@
   }
 
   .content-cards .status {
-    background: color-mix(in srgb, var(--color-surface) 84%, transparent);
-    color: var(--ink);
+    background: var(--color-surface-soft);
+    color: var(--color-text-secondary);
   }
 
   .content-cards .status-published {
@@ -2092,7 +2311,7 @@
 
   .content-meta time {
     flex: 0 0 auto;
-    color: color-mix(in srgb, var(--ink) 70%, white);
+    color: var(--color-text-secondary);
     font-size: var(--text-xs);
   }
 
@@ -2148,23 +2367,47 @@
     color: var(--color-text);
   }
 
+  /* Scrim tối cố định — tránh dùng --color-text (sáng ở dark mode → backdrop bị sáng). */
   .editor::backdrop {
-    background: color-mix(in srgb, var(--color-text) 28%, transparent);
+    background: color-mix(in oklab, #0a100c 52%, transparent);
+    backdrop-filter: blur(5px);
   }
 
-  .editor form {
+  :global(html[data-theme="dark"]) .editor::backdrop {
+    background: color-mix(in oklab, #020403 78%, transparent);
+  }
+
+  .editor-form {
     display: grid;
     gap: var(--space-4);
     padding: var(--space-5);
   }
 
-  .editor-head,
-  .preview-card header,
-  .preview-card footer {
+  .editor-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-3);
+  }
+
+  .editor-head-copy {
+    min-width: 0;
+  }
+
+  .editor-close {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.35rem 0.5rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .editor-body {
+    min-width: 0;
+  }
+
+  .editor-notice {
+    margin: 0;
   }
 
   fieldset {
@@ -2174,16 +2417,26 @@
     border: 0;
   }
 
-  fieldset,
-  .preview {
+  fieldset {
     display: grid;
     align-content: start;
     gap: var(--space-3);
   }
 
+  .preview {
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    gap: var(--space-3);
+  }
+
+  .preview .field-label {
+    justify-self: stretch;
+  }
+
   .editor-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+    grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.7fr);
     gap: var(--space-5);
   }
 
@@ -2203,66 +2456,196 @@
     font-size: var(--text-sm);
   }
 
-  .preview-card {
+  .media-pane {
     display: grid;
-    grid-template-rows: auto minmax(160px, 1fr) auto;
-    min-height: 320px;
-    padding: var(--space-5);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-xl);
-    background: var(--color-theme-peace);
+    gap: 0.65rem;
   }
 
-  .preview-card[data-theme="discovery"] {
-    background: var(--color-theme-discovery);
+  .media-drop {
+    position: relative;
+    display: grid;
+    place-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    min-height: 168px;
+    padding: 1.15rem 1rem;
+    overflow: hidden;
+    border: 1px dashed color-mix(in oklab, var(--color-border) 85%, var(--color-primary));
+    border-radius: calc(var(--radius-lg) + 2px);
+    background:
+      linear-gradient(
+        155deg,
+        color-mix(in oklab, var(--color-primary) 9%, transparent),
+        transparent 52%
+      ),
+      color-mix(in oklab, var(--color-surface-soft) 72%, transparent);
+    color: var(--color-text-secondary);
+    text-align: center;
+    cursor: pointer;
+    transition:
+      border-color 160ms ease,
+      transform 160ms ease,
+      background 160ms ease,
+      filter 160ms ease;
   }
 
-  .preview-card[data-theme="story"] {
-    background: var(--color-theme-story);
+  .media-drop:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+    filter: brightness(1.03);
+    transform: translateY(-1px);
   }
 
-  .preview-card[data-theme="nature"] {
-    background: var(--color-theme-nature);
+  .media-drop:disabled,
+  .media-drop.is-busy {
+    cursor: progress;
+    opacity: 0.85;
   }
 
-  .preview-card[data-theme="psychology"] {
-    background: var(--color-theme-psychology);
+  .media-drop.has-image {
+    min-height: 200px;
+    padding: 0;
+    border-style: solid;
+    border-color: var(--color-border);
   }
 
-  .preview-card[data-theme="cute"] {
-    background: var(--color-theme-cute);
+  .media-drop img {
+    display: block;
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
   }
 
-  .preview-card header,
-  .mark {
+  .media-drop-icon {
+    display: grid;
+    place-items: center;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-surface) 70%, transparent);
     color: var(--color-primary);
   }
 
-  .preview-card h3 {
-    font-family: var(--font-editorial);
-    font-size: var(--text-xl);
-    font-weight: 400;
+  .media-drop-icon svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .media-drop strong {
+    color: var(--color-text);
+    font-size: 0.95rem;
+    font-weight: 650;
+  }
+
+  .media-drop > span:not(.media-drop-icon):not(.media-drop-badge) {
+    font-size: 0.78rem;
     line-height: 1.35;
   }
 
-  .mark {
-    font-family: var(--font-editorial);
-    font-size: var(--text-3xl);
-    line-height: 0.8;
+  .media-drop-badge {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 0.28rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-surface) 88%, transparent);
+    color: var(--color-text);
+    font-size: 0.75rem;
+    font-weight: 650;
+    backdrop-filter: blur(6px);
   }
 
-  .preview-card p,
-  .preview-card footer {
+  .media-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .media-meta {
+    margin-left: auto;
     color: var(--color-text-secondary);
+    font-size: 0.78rem;
   }
 
-  .body-preview {
-    max-height: 160px;
-    margin: 0;
-    overflow: auto;
-    white-space: pre-wrap;
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
+  .media-url {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .media-url-toggle {
+    justify-self: start;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .media-url input {
+    width: 100%;
+  }
+
+  /* Khung tỉ lệ ~ điện thoại 9:19.5 — co theo chiều cao modal. */
+  .preview-phone {
+    position: relative;
+    width: min(100%, 270px, calc(min(70dvh, 620px) * 9 / 19.5));
+    aspect-ratio: 9 / 19.5;
+    max-height: min(70dvh, 620px);
+    margin-inline: auto;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 1.65rem;
+    background: var(--color-background);
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-border) 55%, transparent),
+      0 18px 40px color-mix(in oklab, #000 22%, transparent);
+  }
+
+  .preview-stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    /* Chỉ xem — tránh bấm poll/video gọi API. */
+    pointer-events: none;
+  }
+
+  .preview-stage :global(.stage) {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 14px 16px 18px;
+  }
+
+  .preview-stage :global(.headline) {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-size: clamp(1.2rem, 5.2vw, 1.55rem);
+    line-height: 1.35;
+    -webkit-line-clamp: 8;
+    line-clamp: 8;
+  }
+
+  .preview-stage :global(.headline.under-media) {
+    font-size: clamp(0.95rem, 4.2vw, 1.2rem);
+    line-height: 1.4;
+  }
+
+  .preview-stage :global(.frame) {
+    width: 100%;
+    max-height: 46%;
+  }
+
+  .preview-stage :global(.topic-label) {
+    font-size: 0.72rem;
+  }
+
+  .preview-stage :global(.readmore) {
+    margin-top: 14px;
+    font-size: 0.7rem;
   }
 
   .visually-hidden {
@@ -2276,42 +2659,299 @@
     border: 0;
   }
 
-  @media (max-width: 900px) {
-    .shell {
+  @media (max-width: 1023px) {
+    .main {
+      gap: var(--space-4);
+      padding: var(--space-4);
+    }
+
+    .page-head {
+      display: grid;
       grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+
+    .page-head p {
+      max-width: 40rem;
+    }
+
+    .add-content {
+      justify-self: stretch;
+      justify-content: center;
+      width: 100%;
     }
 
     .stats {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2);
     }
 
-    .page-head,
-    .editor-grid {
-      grid-template-columns: 1fr;
-      display: grid;
+    .stat {
+      min-height: 76px;
+      padding: var(--space-3);
     }
 
-    .page-head {
-      align-items: stretch;
+    .stat-value {
+      font-size: var(--text-lg);
     }
 
-    .add-content {
-      justify-content: center;
-    }
-  }
-
-  @media (max-width: 720px) {
     .content-cards {
-      grid-template-columns: 1fr;
+      gap: var(--space-3);
     }
 
     .content-cards > li {
       min-height: 0;
+      padding: var(--space-4);
+      border-radius: 1.1rem;
+    }
+
+    .content-cards h2 {
+      font-size: clamp(1.15rem, 3.2vw, 1.4rem);
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+    }
+
+    .open-card {
+      width: 44px;
+      height: 44px;
+    }
+
+    .open-card svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* —— Editor: full sheet + tab Soạn | Xem trước —— */
+    .editor {
+      width: 100vw;
+      max-width: 100vw;
+      height: 100dvh;
+      max-height: 100dvh;
+      margin: 0;
+      overflow: hidden;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .editor-form {
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      gap: 0;
+      height: 100dvh;
+      max-height: 100dvh;
+      padding: 0;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .editor-head {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .editor-head h2 {
+      font-size: 1.1rem;
+    }
+
+    .editor-notice {
+      margin: var(--space-3) var(--space-4) 0;
+    }
+
+    .editor-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-1);
+      margin: var(--space-3) var(--space-4) 0;
+      padding: 0.2rem;
+      border-radius: var(--radius-full);
+      background: var(--color-surface-soft);
+    }
+
+    .editor-tab {
+      min-height: 2.35rem;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      color: var(--color-text-secondary);
+      font-weight: 600;
+    }
+
+    .editor-tab[aria-selected="true"] {
+      background: var(--color-surface);
+      color: var(--color-text);
+      box-shadow: 0 1px 2px color-mix(in oklab, #000 8%, transparent);
+    }
+
+    .editor-body {
+      min-height: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: var(--space-4);
+      padding-bottom: var(--space-3);
+    }
+
+    .editor-grid {
+      display: block;
+    }
+
+    .editor-grid[data-pane="compose"] .preview {
+      display: none;
+    }
+
+    .editor-grid[data-pane="preview"] .compose-pane {
+      display: none;
+    }
+
+    .preview {
+      justify-items: center;
+      padding-block: var(--space-2);
+    }
+
+    .preview-caption {
+      justify-self: stretch;
+      text-align: center;
+    }
+
+    .preview-phone {
+      width: min(100%, 280px, calc((100dvh - 14rem) * 9 / 19.5));
+      max-height: calc(100dvh - 14rem);
+    }
+
+    .editor-actions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-2);
+      margin: 0;
+      padding: var(--space-3) var(--space-4);
+      padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+      border-top: 1px solid var(--color-border);
+      background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+      backdrop-filter: blur(8px);
+    }
+
+    .editor-actions-main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-2);
+      width: 100%;
+    }
+
+    .editor-actions-main > button {
+      width: 100%;
+      min-height: 2.75rem;
+    }
+
+    .editor-actions-more {
+      margin-left: 0;
+      justify-content: center;
+      gap: var(--space-3);
+    }
+
+    .editor-actions-more:empty {
+      display: none;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .main {
+      gap: var(--space-3);
+      padding: var(--space-3);
+    }
+
+    h1 {
+      font-size: 1.25rem;
+    }
+
+    .page-head p {
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    .stats {
+      gap: 0.5rem;
+    }
+
+    .stat {
+      min-height: 68px;
+      padding: 0.7rem 0.75rem;
+      border-radius: var(--radius-md);
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+    }
+
+    .tabs {
+      gap: 0.35rem;
+    }
+
+    .tabs button {
+      min-height: 2.25rem;
+      padding: 0 0.7rem;
+      font-size: 0.85rem;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--space-2);
     }
 
     .toolbar label,
     .search {
-      flex-basis: 100%;
+      flex: none;
+      width: 100%;
+    }
+
+    .content-cards {
+      grid-template-columns: 1fr;
+      gap: var(--space-2);
+    }
+
+    .content-cards > li {
+      padding: var(--space-3) var(--space-4);
+      border-radius: 1rem;
+    }
+
+    .excerpt {
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+    }
+
+    .pager {
+      justify-content: stretch;
+    }
+
+    .pager button {
+      flex: 1 1 0;
+      min-height: 2.75rem;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .split > label {
+      flex: none;
+    }
+  }
+
+  @media (min-width: 768px) and (max-width: 1023px) {
+    .content-cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr));
+      gap: var(--space-2);
+    }
+
+    .toolbar label,
+    .search {
+      flex: none;
+      min-width: 0;
     }
   }
 </style>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ContentStatus } from "../content/content.types";
   import type { Submission, SubmissionCounts } from "./d1-submissions";
-  import AdminNav from "../admin/AdminNav.svelte";
+  import AdminShell from "../admin/AdminShell.svelte";
 
   interface Props {
     initialItems: Submission[];
@@ -175,9 +175,7 @@
   }
 </script>
 
-<div class="desk">
-  <div class="shell">
-    <AdminNav current="submissions" onleave={leave} pending={counts.draft} />
+<AdminShell current="submissions" onleave={leave} pending={counts.draft}>
     <main class="main">
       <header class="page-head">
         <h1>Bài người dùng gửi</h1>
@@ -338,22 +336,9 @@
         {/if}
       {/if}
     </main>
-  </div>
-</div>
+</AdminShell>
 
 <style>
-  .desk {
-    min-height: 100vh;
-    color: var(--color-text);
-    background: var(--color-background);
-  }
-
-  .shell {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
-    min-height: 100vh;
-  }
-
   .main {
     display: grid;
     align-content: start;
@@ -613,9 +598,54 @@
     opacity: 0.6;
   }
 
-  @media (max-width: 900px) {
-    .shell {
+  @media (max-width: 1023px) {
+    .main {
+      gap: var(--space-4);
+      padding: var(--space-4);
+      max-width: none;
+    }
+
+    .tabs {
+      flex-wrap: wrap;
+      gap: 0;
+    }
+
+    .tab {
+      flex: 1 1 auto;
+      text-align: center;
+      padding: var(--space-3) var(--space-2);
+    }
+  }
+
+  @media (max-width: 767px) {
+    .main {
+      padding: var(--space-3);
+      gap: var(--space-3);
+    }
+
+    h1 {
+      font-size: 1.25rem;
+    }
+
+    .page-head p {
+      font-size: 0.82rem;
+    }
+
+    .list {
+      gap: var(--space-3);
+    }
+
+    .actions {
+      display: grid;
       grid-template-columns: 1fr;
+      gap: var(--space-2);
+    }
+
+    .actions .primary,
+    .actions .quiet {
+      width: 100%;
+      min-height: 2.75rem;
+      justify-content: center;
     }
   }
 </style>

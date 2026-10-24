@@ -5,7 +5,7 @@
     CollectionSummary
   } from "../collections/d1-collections";
   import { slugFromTitle } from "../collections/d1-collections";
-  import AdminNav from "./AdminNav.svelte";
+  import AdminShell from "./AdminShell.svelte";
 
   interface Props {
     initialCollections: CollectionSummary[];
@@ -36,7 +36,6 @@
   let sortOrder = $state(0);
   let slugTouched = $state(false);
   let coverUploading = $state(false);
-  let coverFileInput = $state<HTMLInputElement | null>(null);
   let createCoverInput = $state<HTMLInputElement | null>(null);
 
   let busy = $state(false);
@@ -128,9 +127,33 @@
     slugTouched = false;
   }
 
+  let metaMode = $state<"create" | "edit">("create");
+
+  function fillMetaFromDetail(row: CollectionDetail) {
+    title = row.title;
+    slug = row.slug;
+    description = row.description;
+    coverUrl = row.coverUrl ?? "";
+    coverAlt = row.coverAlt ?? "";
+    status = row.status;
+    sortOrder = row.sortOrder;
+    slugTouched = true;
+  }
+
   function startCreate() {
     if (busy || createOpen) return;
+    metaMode = "create";
     resetMetaForm();
+    createNotice = null;
+    notice = null;
+    createOpen = true;
+    queueMicrotask(() => createDialog?.showModal());
+  }
+
+  function startEditMeta() {
+    if (!detail || busy || createOpen) return;
+    metaMode = "edit";
+    fillMetaFromDetail(detail);
     createNotice = null;
     notice = null;
     createOpen = true;
@@ -141,6 +164,9 @@
     createDialog?.close();
     createOpen = false;
     createNotice = null;
+    if (metaMode === "edit" && detail) {
+      fillMetaFromDetail(detail);
+    }
   }
 
   function onTitleInput() {
@@ -249,7 +275,7 @@
       status,
       sortOrder
     };
-    const creating = createOpen;
+    const creating = metaMode === "create";
 
     try {
       const response = await fetch(
@@ -279,6 +305,7 @@
         notice = { tone: "ok", text: "Đã tạo bộ sưu tập." };
       } else {
         detail = row;
+        closeCreateModal();
         view = "detail";
         notice = { tone: "ok", text: "Đã lưu bộ." };
       }
@@ -558,8 +585,7 @@
   );
 </script>
 
-<div class="shell">
-  <AdminNav current="collections" onleave={leave} {pending} />
+<AdminShell current="collections" onleave={leave} {pending}>
   <main class="main">
     <header class="head">
       <div class="head-copy">
@@ -572,7 +598,7 @@
             ← Danh mục
           </button>
           <h1>{detail?.title ?? "Chi tiết bộ"}</h1>
-          <p>Chỉnh meta và sắp xếp thứ tự vuốt.</p>
+          <p>Xem thông tin bộ và sắp xếp thứ tự bài vuốt.</p>
         {/if}
       </div>
       <div class="head-actions">
@@ -585,6 +611,15 @@
             disabled={busy || createOpen}
           >
             + Bộ mới
+          </button>
+        {:else if detail}
+          <button
+            type="button"
+            class="btn soft"
+            disabled={busy || createOpen}
+            onclick={() => void openAddModal(detail)}
+          >
+            + Thêm bài
           </button>
         {/if}
       </div>
@@ -680,168 +715,84 @@
           {/each}
         </ul>
       {/if}
-    {:else}
-      <section class="editor-panel" aria-label="Chỉnh bộ">
-        <div class="form-grid">
-          <label class="field wide">
-            <span>Tên bộ</span>
-            <input
-              maxlength="120"
-              placeholder="Ví dụ: 100 câu nói động lực"
-              bind:value={title}
-              oninput={onTitleInput}
-              disabled={busy}
-            />
-          </label>
-
-          <label class="field wide">
-            <span>Đường dẫn</span>
-            <div class="slug-row">
-              <span class="slug-prefix">/c/</span>
-              <input
-                maxlength="80"
-                bind:value={slug}
-                oninput={() => (slugTouched = true)}
-                disabled={busy}
+    {:else if detail}
+      <section class="detail-layout" aria-label="Chi tiết bộ sưu tập">
+        <aside class="detail-info">
+          <div
+            class="info-cover"
+            class:is-placeholder={!detail.coverUrl}
+          >
+            {#if detail.coverUrl}
+              <img
+                src={detail.coverUrl}
+                alt={detail.coverAlt || detail.title}
               />
-            </div>
-          </label>
-
-          <label class="field wide">
-            <span>Lời mở đầu</span>
-            <textarea
-              rows="3"
-              maxlength="400"
-              placeholder="Một câu ngắn vì sao bộ này đáng đọc…"
-              bind:value={description}
-              disabled={busy}
-            ></textarea>
-          </label>
-
-          <div class="field wide cover-field">
-            <span>Ảnh bìa</span>
-            <div class="cover-row">
-              <div class="cover-preview" class:empty={!coverUrl}>
-                {#if coverUrl}
-                  <img
-                    src={coverUrl}
-                    alt={coverAlt || title || "Ảnh bìa"}
-                  />
-                {:else}
-                  <span>Chưa có ảnh</span>
-                {/if}
-              </div>
-              <div class="cover-controls">
-                <input
-                  bind:this={coverFileInput}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  hidden
-                  onchange={onCoverPicked}
-                />
-                <button
-                  type="button"
-                  class="btn soft"
-                  disabled={busy || coverUploading}
-                  onclick={() => coverFileInput?.click()}
-                >
-                  {coverUploading
-                    ? "Đang tải…"
-                    : coverUrl
-                      ? "Đổi ảnh"
-                      : "Chọn ảnh"}
-                </button>
-                {#if coverUrl}
-                  <button
-                    type="button"
-                    class="btn soft"
-                    disabled={busy || coverUploading}
-                    onclick={clearCover}
-                  >
-                    Gỡ ảnh
-                  </button>
-                {/if}
-                <label class="cover-url-field">
-                  <span>Hoặc dán URL</span>
-                  <input
-                    type="url"
-                    placeholder="/api/media/image/… hoặc https://…"
-                    bind:value={coverUrl}
-                    disabled={busy || coverUploading}
-                  />
-                </label>
-                <label class="cover-url-field">
-                  <span>Chú thích ảnh</span>
-                  <input
-                    maxlength="160"
-                    placeholder="Mô tả ngắn cho ảnh bìa"
-                    bind:value={coverAlt}
-                    disabled={busy || coverUploading}
-                  />
-                </label>
-              </div>
-            </div>
+            {:else}
+              <span class="info-cover-mark" aria-hidden="true">❋</span>
+              <span>Chưa có ảnh bìa</span>
+            {/if}
           </div>
 
-          <label class="field">
-            <span>Trạng thái</span>
-            <select bind:value={status} disabled={busy}>
-              <option value="draft">Nháp</option>
-              <option value="published">Xuất bản</option>
-              <option value="archived">Lưu trữ</option>
-            </select>
-          </label>
+          <div class="info-body">
+            <div class="info-top">
+              <span class="status-pill" data-status={detail.status}>
+                {statusLabel(detail.status)}
+              </span>
+              <span class="info-order">Thứ tự {detail.sortOrder}</span>
+            </div>
 
-          <label class="field">
-            <span>Thứ tự danh mục</span>
-            <input
-              type="number"
-              min="0"
-              max="1000000"
-              bind:value={sortOrder}
-              disabled={busy}
-            />
-          </label>
-        </div>
+            <h2 class="info-title">{detail.title}</h2>
+            <p class="info-slug">
+              <code>/c/{detail.slug}</code>
+            </p>
 
-        <div class="actions">
-          <button
-            type="button"
-            class="btn primary"
-            onclick={() => void saveMeta()}
-            disabled={busy}
-          >
-            Lưu bộ
-          </button>
-          {#if detail}
-            <button
-              type="button"
-              class="btn soft"
-              disabled={busy}
-              onclick={() => void openAddModal(detail)}
-            >
-              + Thêm bài
-            </button>
-            <a
-              class="btn soft"
-              href={`/c/${encodeURIComponent(slug)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Xem public ↗
-            </a>
-            <button
-              type="button"
-              class="btn danger"
-              onclick={() => void removeCollection()}
-              disabled={busy}
-            >
-              Xóa / lưu trữ
-            </button>
-          {/if}
-        </div>
+            {#if detail.description}
+              <p class="info-blurb">{detail.description}</p>
+            {:else}
+              <p class="info-blurb muted">Chưa có lời mở đầu</p>
+            {/if}
 
-        {#if view === "detail" && detail}
+            <dl class="info-meta">
+              <div>
+                <dt>Bài trong bộ</dt>
+                <dd>{detail.items.length}</dd>
+              </div>
+              <div>
+                <dt>Đã xuất bản</dt>
+                <dd>{detail.publishedCount}</dd>
+              </div>
+            </dl>
+
+            <div class="info-actions">
+              <button
+                type="button"
+                class="btn primary"
+                disabled={busy || createOpen}
+                onclick={startEditMeta}
+              >
+                Chỉnh sửa thông tin
+              </button>
+              <a
+                class="btn soft"
+                href={`/c/${encodeURIComponent(detail.slug)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Xem public ↗
+              </a>
+              <button
+                type="button"
+                class="btn danger"
+                onclick={() => void removeCollection()}
+                disabled={busy}
+              >
+                Xóa / lưu trữ
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <div class="detail-members">
           <div class="members">
             <div class="members-head">
               <div>
@@ -856,7 +807,7 @@
             {#if detail.items.length === 0}
               <div class="empty compact">
                 <p>Chưa gắn bài</p>
-                <span>Bấm “+ Thêm bài” hoặc dấu + trên thẻ danh mục.</span>
+                <span>Bấm “+ Thêm bài” ở đầu trang hoặc trên thẻ danh mục.</span>
               </div>
             {:else}
               <ol class="member-list">
@@ -910,11 +861,11 @@
               </ol>
             {/if}
           </div>
-        {/if}
+        </div>
       </section>
     {/if}
   </main>
-</div>
+</AdminShell>
 
 <dialog
   class="create-dialog"
@@ -934,10 +885,16 @@
     >
       <header class="create-head">
         <div class="create-head-copy">
-          <p class="eyebrow">Bộ sưu tập mới</p>
-          <h2>Tạo tuyển tập</h2>
+          <p class="eyebrow">
+            {metaMode === "edit" ? "Chỉnh sửa" : "Bộ sưu tập mới"}
+          </p>
+          <h2>
+            {metaMode === "edit" ? "Thông tin bộ" : "Tạo tuyển tập"}
+          </h2>
           <p class="create-lede">
-            Đặt tên, ảnh bìa và lời mở đầu — gắn bài sau bằng nút + trên thẻ.
+            {metaMode === "edit"
+              ? "Cập nhật tên, ảnh bìa, trạng thái và lời mở đầu."
+              : "Đặt tên, ảnh bìa và lời mở đầu — gắn bài sau bằng nút + trên thẻ."}
           </p>
         </div>
         <button
@@ -1093,7 +1050,11 @@
           class="btn primary"
           disabled={busy || coverUploading || !title.trim()}
         >
-          {busy ? "Đang tạo…" : "Tạo bộ"}
+          {busy
+            ? "Đang lưu…"
+            : metaMode === "edit"
+              ? "Lưu thay đổi"
+              : "Tạo bộ"}
         </button>
       </footer>
     </form>
@@ -1196,18 +1157,12 @@
 </dialog>
 
 <style>
-  .shell {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    min-height: 100dvh;
-    color: var(--color-text);
-  }
-
   .main {
     display: grid;
     gap: var(--space-4);
     align-content: start;
     padding: var(--space-6);
+    color: var(--color-text);
     background:
       radial-gradient(
         900px 420px at 8% -12%,
@@ -1485,7 +1440,7 @@
     color: var(--color-text);
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 767px) {
     .cover-row {
       grid-template-columns: 1fr;
     }
@@ -1577,14 +1532,149 @@
     font-size: 0.88rem;
   }
 
-  .editor-panel {
+  .detail-layout {
     display: grid;
-    gap: var(--space-4);
-    padding: var(--space-5);
+    grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+    gap: var(--space-5);
+    align-items: start;
+  }
+
+  .detail-info {
+    position: sticky;
+    top: var(--space-4);
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+    border-radius: calc(var(--radius-lg) + 2px);
+    background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+    box-shadow: 0 12px 32px color-mix(in srgb, var(--color-text) 5%, transparent);
+  }
+
+  .info-cover {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-soft));
+  }
+
+  .info-cover.is-placeholder {
+    display: grid;
+    place-content: center;
+    gap: 0.35rem;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    text-align: center;
+  }
+
+  .info-cover img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .info-cover-mark {
+    font-size: 1.4rem;
+    opacity: 0.7;
+  }
+
+  .info-body {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+
+  .info-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .info-order {
+    color: var(--color-text-secondary);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .info-title {
+    margin: 0;
+    font-family: var(--font-editorial);
+    font-size: 1.35rem;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+
+  .info-slug {
+    margin: 0;
+  }
+
+  .info-slug code {
+    font-size: 0.8rem;
+    color: var(--color-primary);
+  }
+
+  .info-blurb {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .info-blurb.muted {
+    font-style: italic;
+    opacity: 0.85;
+  }
+
+  .info-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+    margin: 0;
+  }
+
+  .info-meta div {
+    display: grid;
+    gap: 0.15rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-soft);
+  }
+
+  .info-meta dt {
+    color: var(--color-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+
+  .info-meta dd {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+  }
+
+  .info-actions {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .info-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .detail-members {
+    min-width: 0;
+  }
+
+  .detail-members .members {
+    margin: 0;
+    padding: var(--space-4);
     border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
     border-radius: calc(var(--radius-lg) + 2px);
     background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-    box-shadow: 0 12px 32px color-mix(in srgb, var(--color-text) 5%, transparent);
   }
 
   .form-grid {
@@ -2077,7 +2167,7 @@
     border-top: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 767px) {
     .create-body,
     .create-meta-row {
       grid-template-columns: 1fr;
@@ -2087,6 +2177,15 @@
     .create-cover-drop img {
       min-height: 180px;
       height: 180px;
+    }
+
+    .create-foot {
+      flex-direction: column-reverse;
+    }
+
+    .create-foot .btn {
+      width: 100%;
+      justify-content: center;
     }
   }
 
@@ -2175,10 +2274,24 @@
     flex: 1 1 180px;
   }
 
-  @media (max-width: 900px) {
-    .shell,
-    .form-grid {
-      grid-template-columns: 1fr;
+  @media (max-width: 1023px) {
+    .main {
+      gap: var(--space-4);
+      padding: var(--space-4);
+    }
+
+    .head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .head-actions {
+      width: 100%;
+    }
+
+    .head-actions .btn {
+      flex: 1 1 auto;
+      justify-content: center;
     }
 
     .member-list li {
@@ -2188,6 +2301,136 @@
     .member-actions {
       grid-column: 1 / -1;
       justify-content: flex-end;
+    }
+
+    .create-dialog,
+    .add-dialog {
+      width: 100vw;
+      max-width: 100vw;
+      height: 100dvh;
+      max-height: 100dvh;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      overflow: hidden;
+    }
+
+    .create-sheet {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 0;
+      height: 100dvh;
+      max-height: 100dvh;
+      padding: 0;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .create-head,
+    .add-head {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .create-body,
+    .create-meta-row {
+      grid-template-columns: 1fr;
+    }
+
+    .create-body {
+      min-height: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: var(--space-4);
+    }
+
+    .create-cover-drop,
+    .create-cover-drop img {
+      min-height: 180px;
+      height: 180px;
+    }
+
+    .create-foot {
+      margin: 0;
+      padding: var(--space-3) var(--space-4);
+      padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+      border-top: 1px solid var(--color-border);
+      background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+    }
+
+    .add-dialog {
+      overflow: auto;
+    }
+
+    .add-sheet {
+      min-height: 100dvh;
+      padding: 0 0 max(var(--space-4), env(safe-area-inset-bottom));
+      padding-top: env(safe-area-inset-top);
+      gap: var(--space-3);
+    }
+
+    .add-sheet > :not(.add-head) {
+      padding-inline: var(--space-4);
+    }
+  }
+
+  /* Tablet hẹp / phone: xếp dọc — info trên, danh sách dưới */
+  @media (max-width: 900px) {
+    .detail-layout {
+      grid-template-columns: 1fr;
+      gap: var(--space-4);
+    }
+
+    .detail-info {
+      position: static;
+    }
+
+    .info-actions {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .info-actions .btn.primary {
+      grid-column: 1 / -1;
+    }
+
+    .info-actions .btn.danger {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .main {
+      padding: var(--space-3);
+    }
+
+    .head h1 {
+      font-size: 1.45rem;
+    }
+
+    .head-copy > p:last-child {
+      font-size: 0.85rem;
+    }
+
+    .card-grid {
+      grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+
+    .info-actions {
+      grid-template-columns: 1fr;
+    }
+
+    .info-actions .btn.primary,
+    .info-actions .btn.danger {
+      grid-column: auto;
+    }
+
+    .detail-members .members {
+      padding: var(--space-3);
+    }
+
+    .info-body {
+      padding: var(--space-3);
     }
   }
 </style>

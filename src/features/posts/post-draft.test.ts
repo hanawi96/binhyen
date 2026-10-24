@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parsePostDraft } from "./post-draft";
 
 describe("parsePostDraft", () => {
-  it("builds a story draft styled by the first topic", () => {
+  it("builds a story draft with category from the first topic", () => {
     expect(
       parsePostDraft({
         title: "  Một buổi sáng  ",
@@ -30,22 +30,32 @@ describe("parsePostDraft", () => {
         posterUrl: "",
         pollOptions: [],
         collectionIds: [],
-        theme: "nature",
+        theme: "peace",
         category: "Thiên nhiên kỳ thú"
       }
     });
   });
 
-  it("requires a title and 1 to 3 known topics", () => {
+  it("requires a title and 1 to 3 valid topic slugs", () => {
     expect(parsePostDraft({ title: " ", topics: ["peace"] }).ok).toBe(false);
     expect(parsePostDraft({ title: "A", topics: [] }).ok).toBe(false);
-    expect(parsePostDraft({ title: "A", topics: ["space"] }).ok).toBe(false);
+    expect(parsePostDraft({ title: "A", topics: ["X"] }).ok).toBe(false);
     expect(
       parsePostDraft({
         title: "A",
         topics: ["peace", "nature", "cute", "tips"]
       }).ok
     ).toBe(false);
+  });
+
+  it("accepts a new catalog topic with category Khác", () => {
+    const result = parsePostDraft({
+      title: "A",
+      topics: ["goc-nho"]
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.category).toBe("Khác");
   });
 
   it("rejects oversized or non-text fields", () => {

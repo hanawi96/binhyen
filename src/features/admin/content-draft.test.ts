@@ -47,38 +47,45 @@ describe("Content draft", () => {
     });
   });
 
-  it("accepts an image draft with an HTTPS URL", () => {
-    const result = parseContentDraft({
+  it("promotes story drafts to image when a media URL is present", () => {
+    const withImage = parseContentDraft({
       title: "Ánh sáng sớm",
-      format: "image",
+      format: "text",
       topics: ["nature"],
       moods: ["calm"],
       imageUrl: "https://images.example.com/dawn.jpg",
       imageAlt: "Bình minh",
       imageWidth: "720",
-      imageHeight: 900
+      imageHeight: 900,
+      body: "Mặt trời lên chậm trên đồi."
     });
 
-    expect(result.ok && result.value).toMatchObject({
+    expect(withImage.ok && withImage.value).toMatchObject({
       format: "image",
-      body: "",
+      body: "Mặt trời lên chậm trên đồi.",
       imageUrl: "https://images.example.com/dawn.jpg",
       imageAlt: "Bình minh",
       imageWidth: 720,
       imageHeight: 900
     });
-    expect(
-      parseContentDraft({
-        title: "Thiếu ảnh",
-        format: "image",
-        topics: ["nature"],
-        moods: []
-      }).ok
-    ).toBe(false);
+
+    const textOnly = parseContentDraft({
+      title: "Chỉ chữ",
+      format: "image",
+      topics: ["nature"],
+      moods: ["calm"],
+      body: "Không có ảnh."
+    });
+    expect(textOnly.ok && textOnly.value).toMatchObject({
+      format: "text",
+      body: "Không có ảnh.",
+      imageUrl: ""
+    });
+
     expect(
       parseContentDraft({
         title: "HTTP",
-        format: "image",
+        format: "text",
         topics: ["nature"],
         moods: [],
         imageUrl: "http://insecure.example/a.jpg"
@@ -87,7 +94,7 @@ describe("Content draft", () => {
     expect(
       parseContentDraft({
         title: "R2 local",
-        format: "image",
+        format: "text",
         topics: ["nature"],
         moods: [],
         imageUrl:
@@ -106,12 +113,13 @@ describe("Content draft", () => {
       imageAlt: "Lá rung nhẹ",
       posterUrl: "https://cdn.example.com/breeze.jpg",
       imageWidth: 1280,
-      imageHeight: 720
+      imageHeight: 720,
+      body: "Lá kể chuyện gió."
     });
 
     expect(result.ok && result.value).toMatchObject({
       format: "video",
-      body: "",
+      body: "Lá kể chuyện gió.",
       imageUrl: "https://cdn.example.com/breeze.mp4",
       posterUrl: "https://cdn.example.com/breeze.jpg",
       imageWidth: 1280,
@@ -164,13 +172,13 @@ describe("Content draft", () => {
 
     expect(result.ok && result.value).toMatchObject({
       kind: "story",
-      theme: "nature",
+      theme: "peace",
       category: "Thiên nhiên kỳ thú",
       description: ""
     });
   });
 
-  it("rejects an empty title, a bad link, and an unknown topic", () => {
+  it("rejects an empty title, a bad link, and a bad topic slug", () => {
     expect(parseContentDraft({ ...draft, title: "  " }).ok).toBe(false);
     expect(
       parseContentDraft({
@@ -178,10 +186,22 @@ describe("Content draft", () => {
         sourceUrl: "javascript:alert(1)"
       }).ok
     ).toBe(false);
-    expect(parseContentDraft({ ...draft, topics: ["nope"] }).ok).toBe(
+    expect(parseContentDraft({ ...draft, topics: ["Nope"] }).ok).toBe(
       false
     );
+    expect(parseContentDraft({ ...draft, topics: ["x"] }).ok).toBe(false);
     expect(parseContentDraft({ ...draft, topics: [] }).ok).toBe(false);
+  });
+
+  it("accepts a new catalog topic slug with category Khác", () => {
+    const result = parseContentDraft({
+      ...draft,
+      topics: ["goc-nho"]
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.topics).toEqual(["goc-nho"]);
+    expect(result.value.category).toBe("Khác");
   });
 
   it("reads the next page without trusting a broken cursor", () => {

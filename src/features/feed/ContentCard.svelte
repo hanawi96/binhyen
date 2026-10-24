@@ -79,7 +79,6 @@
   class="stage reading"
   class:media={mediaMode}
   class:out={leaving}
-  data-theme={content.theme}
   aria-labelledby={`content-title-${content.id}`}
 >
   {#if actions}
@@ -164,6 +163,8 @@
 
 <style>
   .stage {
+    /* Khoảng cố định từ hàng like/lưu → chủ đề (mọi dạng nội dung). */
+    --actions-to-topic: 1rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -181,6 +182,7 @@
   .stage.media {
     /* Ảnh co trước; tiêu đề không bị stage cắt chân chữ. */
     justify-content: center;
+    /* Cùng --actions-to-topic giữa actions và topic; các khoảng còn lại giữ 14px. */
     gap: 14px;
     padding-bottom: 20px;
   }
@@ -192,12 +194,16 @@
     justify-content: center;
     align-self: stretch;
     width: 100%;
-    margin: 0 0 0.85rem;
+    margin: 0 0 var(--actions-to-topic);
     padding-inline: 4px;
   }
 
+  /*
+   * Media: flex gap cũng nằm giữa actions và topic → trừ gap để tổng
+   * vẫn đúng --actions-to-topic (đồng bộ với bài chữ / poll không media).
+   */
   .stage.media .card-actions {
-    margin-bottom: 1rem;
+    margin-bottom: calc(var(--actions-to-topic) - 14px);
   }
 
   @media (min-width: 641px) {
@@ -257,9 +263,11 @@
     flex: 0 1 auto;
     width: min(100%, 720px);
     max-height: min(62dvh, 100%);
+    min-width: 0;
     min-height: 0;
     margin: 0 auto;
     overflow: hidden;
+    background: color-mix(in oklab, var(--color-text) 6%, transparent);
   }
 
   /* Chừa chỗ cố định cho tiêu đề (+ topic/actions) — ảnh không nuốt hết chiều cao. */
@@ -267,11 +275,15 @@
     max-height: min(58dvh, calc(100% - 5.5rem));
   }
 
+  /* Cover full khung — tránh letterbox khi max-height làm lệch tỉ lệ khung. */
   .media-el {
     display: block;
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
+    object-position: center;
     background: transparent;
   }
 

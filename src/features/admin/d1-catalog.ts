@@ -87,3 +87,51 @@ export async function updateCatalogEntry(
 
   return row ? mapRow(row) : null;
 }
+
+const topicInsert = `INSERT INTO topics (slug, label, sort_order) VALUES (?, ?, ?)`;
+const moodInsert = `INSERT INTO moods (slug, label, sort_order) VALUES (?, ?, ?)`;
+const topicMaxOrder = `SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM topics`;
+const moodMaxOrder = `SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM moods`;
+
+export type CatalogCreateResult =
+  | { ok: true; item: CatalogEntry }
+  | { ok: false; conflict: boolean };
+
+export async function createCatalogEntry(
+  db: D1Database,
+  kind: "topic" | "mood",
+  slug: string,
+  label: string
+): Promise<CatalogCreateResult> {
+  const maxRow = await db
+    .prepare(kind === "topic" ? topicMaxOrder : moodMaxOrder)
+    .first<{ max_order: number }>();
+
+  const sortOrder = Math.min(
+    999,
+    (typeof maxRow?.max_order === "number" ? maxRow.max_order : -1) + 1
+  );
+
+  try {
+    await db
+      .prepare(kind === "topic" ? topicInsert : moodInsert)
+      .bind(slug, label, sortOrder)
+      .run();
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE/i.test(error.message)) {
+      return { ok: false, conflict: true };
+    }
+    throw error;
+  }
+
+  const row = await db
+    .prepare(kind === "topic" ? topicOne : moodOne)
+    .bind(slug)
+    .first<CatalogRow>();
+
+  if (!row) {
+    return { ok: false, conflict: false };
+  }
+
+  return { ok: true, item: mapRow(row) };
+}

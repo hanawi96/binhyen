@@ -79,8 +79,8 @@
 <style>
   .theme-corner {
     position: fixed;
-    top: 16px;
-    right: 16px;
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
     z-index: 2;
   }
 
@@ -94,6 +94,25 @@
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     color: var(--color-text);
+  }
+
+  @media (max-width: 767px) {
+    .gate {
+      width: calc(100% - 1.5rem);
+      margin: 4.5rem auto 1.5rem;
+      margin-bottom: max(1.5rem, env(safe-area-inset-bottom));
+      padding: var(--space-5);
+      gap: var(--space-3);
+    }
+
+    h1 {
+      font-size: 1.25rem;
+    }
+
+    .primary {
+      min-height: 2.75rem;
+      width: 100%;
+    }
   }
 
   .brand-mark {

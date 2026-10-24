@@ -1,6 +1,9 @@
 import type { ContentDraftInput } from "../admin/content-draft";
-import { isContentTopic, type ContentTopic } from "../content/content.types";
-import { lookFromTopic } from "../content/topic-look";
+import { isCatalogSlug } from "../admin/catalog";
+import {
+  categoryForTopicSlug,
+  DEFAULT_CONTENT_THEME
+} from "../content/topic-look";
 
 export const MAX_POST_TOPICS = 3;
 /** Ban nhap chua dang toi da cua mot nguoi, chan spam. */
@@ -15,13 +18,13 @@ function text(value: unknown, limit: number): string | null {
   return trimmed.length <= limit ? trimmed : null;
 }
 
-function topicsOf(value: unknown): ContentTopic[] | null {
+function topicsOf(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
 
-  const chosen: ContentTopic[] = [];
+  const chosen: string[] = [];
 
   for (const item of value) {
-    if (typeof item !== "string" || !isContentTopic(item)) return null;
+    if (typeof item !== "string" || !isCatalogSlug(item)) return null;
     if (!chosen.includes(item)) chosen.push(item);
   }
 
@@ -75,7 +78,8 @@ export function parsePostDraft(
       posterUrl: "",
       pollOptions: [],
       collectionIds: [],
-      ...lookFromTopic(topics[0])
+      theme: DEFAULT_CONTENT_THEME,
+      category: categoryForTopicSlug(topics[0])
     }
   };
 }

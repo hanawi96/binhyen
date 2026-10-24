@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
+
   import ThemeToggle from "../theme/ThemeToggle.svelte";
 
   interface Props {
@@ -13,96 +15,250 @@
   }
 
   let { current, onleave, pending = 0 }: Props = $props();
+
+  const DRAWER_MQ = "(max-width: 1023px)";
+
+  let open = $state(false);
+  let narrow = $state(false);
+  let menuBtn = $state<HTMLButtonElement | null>(null);
+  let panelEl = $state<HTMLElement | null>(null);
+  let media: MediaQueryList | null = null;
+
+  function setOpen(next: boolean) {
+    open = next && narrow;
+  }
+
+  function toggle() {
+    setOpen(!open);
+  }
+
+  function close() {
+    setOpen(false);
+  }
+
+  function focusables(root: HTMLElement): HTMLElement[] {
+    return [
+      ...root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ].filter((node) => !node.hasAttribute("disabled") && node.tabIndex !== -1);
+  }
+
+  function onKey(event: KeyboardEvent) {
+    if (!open) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      menuBtn?.focus();
+      return;
+    }
+
+    if (event.key !== "Tab" || !panelEl) return;
+
+    const items = focusables(panelEl);
+    if (items.length === 0) return;
+
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
+
+  function onMediaChange() {
+    narrow = media?.matches ?? false;
+    if (!narrow) open = false;
+  }
+
+  onMount(() => {
+    media = window.matchMedia(DRAWER_MQ);
+    onMediaChange();
+    media.addEventListener("change", onMediaChange);
+    window.addEventListener("keydown", onKey);
+  });
+
+  onDestroy(() => {
+    media?.removeEventListener("change", onMediaChange);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("keydown", onKey);
+    }
+    if (typeof document !== "undefined") {
+      document.body.style.removeProperty("overflow");
+    }
+  });
+
+  $effect(() => {
+    if (typeof document === "undefined") return;
+    if (open) {
+      document.body.style.overflow = "hidden";
+      queueMicrotask(() => {
+        const first = panelEl ? focusables(panelEl)[0] : null;
+        first?.focus();
+      });
+    } else {
+      document.body.style.removeProperty("overflow");
+    }
+  });
 </script>
 
-<aside class="sidebar">
-  <a class="brand" href="/admin/contents">
-    <span aria-hidden="true">✳</span>
-    Bình Yên
-  </a>
-  <nav aria-label="Quản trị">
-    <a
-      href="/admin/contents"
-      aria-current={current === "contents" ? "page" : undefined}
-    >
-      Quản lý nội dung
+<div class="nav-root" data-open={open ? "true" : "false"}>
+  <header class="topbar">
+    <a class="brand top-brand" href="/admin/contents">
+      <span aria-hidden="true">✳</span>
+      Bình Yên
     </a>
-    <a
-      href="/admin/submissions"
-      aria-current={current === "submissions" ? "page" : undefined}
-    >
-      Bài người dùng gửi
+    <div class="top-actions">
       {#if pending > 0}
-        <span class="badge">
+        <a
+          class="pending-chip"
+          href="/admin/submissions"
+          aria-label={`${pending > 99 ? "99+" : pending} bài chờ duyệt`}
+        >
           {pending > 99 ? "99+" : pending}
-          <span class="sr-only">bài chờ duyệt</span>
-        </span>
+        </a>
       {/if}
-    </a>
-    <a
-      href="/admin/catalog"
-      aria-current={current === "catalog" ? "page" : undefined}
-    >
-      Chủ đề &amp; tâm trạng
-    </a>
-    <a
-      href="/admin/ambient"
-      aria-current={current === "ambient" ? "page" : undefined}
-    >
-      Nhạc nền
-    </a>
-    <a
-      href="/admin/collections"
-      aria-current={current === "collections" ? "page" : undefined}
-    >
-      Bộ sưu tập
-    </a>
-  </nav>
-
-  <div class="side-foot">
-    <div class="theme-row">
-      <span class="theme-label">Giao diện</span>
-      <ThemeToggle />
-    </div>
-    <div class="side-actions" role="group" aria-label="Liên kết nhanh">
-      <a class="side-action" href="/">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M4.5 11.2 12 4.8l7.5 6.4M7 10.8V19h4.2v-4.2h1.6V19H17v-8.2"
-          />
-        </svg>
-        Xem trang chủ
-      </a>
-      <button class="side-action is-leave" type="button" onclick={onleave}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M10 5.5H6.8A1.8 1.8 0 0 0 5 7.3v9.4A1.8 1.8 0 0 0 6.8 18.5H10M13.5 12H20m0 0-2.8-2.8M20 12l-2.8 2.8"
-          />
-        </svg>
-        Rời phòng
+      <button
+        bind:this={menuBtn}
+        class="menu-btn"
+        type="button"
+        aria-expanded={open}
+        aria-controls="admin-nav-panel"
+        onclick={toggle}
+      >
+        {open ? "Đóng" : "Menu"}
       </button>
     </div>
-  </div>
-</aside>
+  </header>
+
+  {#if open}
+    <button
+      class="scrim"
+      type="button"
+      aria-label="Đóng menu"
+      onclick={close}
+    ></button>
+  {/if}
+
+  <aside
+    bind:this={panelEl}
+    class="panel"
+    class:is-open={open}
+    id="admin-nav-panel"
+    aria-hidden={narrow && !open ? "true" : undefined}
+    inert={narrow && !open}
+  >
+    <a class="brand panel-brand" href="/admin/contents" onclick={close}>
+      <span aria-hidden="true">✳</span>
+      Bình Yên
+    </a>
+    <nav aria-label="Quản trị">
+      <a
+        href="/admin/contents"
+        aria-current={current === "contents" ? "page" : undefined}
+        onclick={close}
+      >
+        Quản lý nội dung
+      </a>
+      <a
+        href="/admin/submissions"
+        aria-current={current === "submissions" ? "page" : undefined}
+        onclick={close}
+      >
+        Bài người dùng gửi
+        {#if pending > 0}
+          <span class="badge">
+            {pending > 99 ? "99+" : pending}
+            <span class="sr-only">bài chờ duyệt</span>
+          </span>
+        {/if}
+      </a>
+      <a
+        href="/admin/catalog"
+        aria-current={current === "catalog" ? "page" : undefined}
+        onclick={close}
+      >
+        Chủ đề &amp; tâm trạng
+      </a>
+      <a
+        href="/admin/ambient"
+        aria-current={current === "ambient" ? "page" : undefined}
+        onclick={close}
+      >
+        Nhạc nền
+      </a>
+      <a
+        href="/admin/collections"
+        aria-current={current === "collections" ? "page" : undefined}
+        onclick={close}
+      >
+        Bộ sưu tập
+      </a>
+    </nav>
+
+    <div class="side-foot">
+      <div class="theme-row">
+        <span class="theme-label">Giao diện</span>
+        <ThemeToggle />
+      </div>
+      <div class="side-actions" role="group" aria-label="Liên kết nhanh">
+        <a class="side-action" href="/" onclick={close}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M4.5 11.2 12 4.8l7.5 6.4M7 10.8V19h4.2v-4.2h1.6V19H17v-8.2"
+            />
+          </svg>
+          Xem trang chủ
+        </a>
+        <button class="side-action is-leave" type="button" onclick={onleave}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M10 5.5H6.8A1.8 1.8 0 0 0 5 7.3v9.4A1.8 1.8 0 0 0 6.8 18.5H10M13.5 12H20m0 0-2.8-2.8M20 12l-2.8 2.8"
+            />
+          </svg>
+          Rời phòng
+        </button>
+      </div>
+    </div>
+  </aside>
+</div>
 
 <style>
-  .sidebar {
+  .nav-root {
+    display: contents;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-6);
     padding: var(--space-6) var(--space-4);
     border-right: 1px solid var(--color-border);
     background: var(--color-surface);
+  }
+
+  .top-brand {
+    display: none;
   }
 
   .brand {
@@ -143,7 +299,8 @@
     color: var(--color-text);
   }
 
-  .badge {
+  .badge,
+  .pending-chip {
     min-width: 1.4rem;
     padding: 0.1rem 0.45rem;
     border-radius: 999px;
@@ -262,63 +419,110 @@
     color: #e08a8a;
   }
 
-  @media (max-width: 900px) {
-    .sidebar {
+  .scrim {
+    display: none;
+  }
+
+  @media (max-width: 1023px) {
+    .nav-root {
+      display: block;
       position: sticky;
       top: 0;
-      z-index: 2;
-      flex-direction: row;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--space-3);
-      padding: var(--space-3) var(--space-4);
+      z-index: 40;
     }
 
-    .brand {
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      min-height: 3.25rem;
+      padding: 0.55rem var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .top-brand {
+      display: flex;
       padding-inline: 0;
     }
 
-    .brand,
-    nav a,
-    .side-action {
-      white-space: nowrap;
-    }
-
-    nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.15rem;
-      flex: 1 1 auto;
-    }
-
-    .side-foot {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--space-2);
-      margin-top: 0;
-      margin-left: auto;
-      padding-top: 0;
-      border-top: 0;
-    }
-
-    .theme-row {
-      padding: 0.35rem 0.55rem 0.35rem 0.75rem;
-    }
-
-    .theme-label {
+    .panel-brand {
       display: none;
     }
 
-    .side-actions {
+    .top-actions {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.15rem;
+      align-items: center;
+      gap: var(--space-2);
     }
 
-    .side-action {
-      width: auto;
-      padding: 0.45rem 0.7rem;
+    .pending-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 1.75rem;
+      padding-inline: 0.55rem;
+      text-decoration: none;
+    }
+
+    .menu-btn {
+      min-height: 2.25rem;
+      padding: 0 0.85rem;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface-soft);
+      color: var(--color-text);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .menu-btn:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+
+    .scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 45;
+      border: 0;
+      background: color-mix(in oklab, #0a100c 48%, transparent);
+      cursor: pointer;
+    }
+
+    :global(html[data-theme="dark"]) .scrim {
+      background: color-mix(in oklab, #020403 72%, transparent);
+    }
+
+    .panel {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      width: min(20rem, 86vw);
+      padding-top: max(var(--space-5), env(safe-area-inset-top));
+      padding-bottom: max(var(--space-5), env(safe-area-inset-bottom));
+      border-right: 1px solid var(--color-border);
+      box-shadow: 8px 0 32px color-mix(in oklab, #000 18%, transparent);
+      transform: translateX(-105%);
+      transition: transform var(--duration-normal) var(--ease-standard);
+      pointer-events: none;
+    }
+
+    .panel.is-open {
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .panel {
+        transition: none;
+      }
     }
   }
 </style>

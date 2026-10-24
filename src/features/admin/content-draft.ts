@@ -5,18 +5,18 @@ import {
 } from "../content/content-media";
 import {
   contentKinds,
-  contentMoods,
-  contentTopics,
   type ContentFormat,
   type ContentKind,
-  type ContentMood,
   type ContentStatus,
-  type ContentTheme,
-  type ContentTopic
+  type ContentTheme
 } from "../content/content.types";
-import { lookFromTopic } from "../content/topic-look";
+import {
+  categoryForTopicSlug,
+  DEFAULT_CONTENT_THEME
+} from "../content/topic-look";
 import { parseCollectionIdList } from "../collections/d1-collections";
 import { parsePollOptions } from "../interactions/content-polls";
+import { isCatalogSlug } from "./catalog";
 
 export interface ContentDraftInput {
   title: string;
@@ -26,8 +26,8 @@ export interface ContentDraftInput {
   format: ContentFormat;
   kind: ContentKind;
   theme: ContentTheme;
-  topics: ContentTopic[];
-  moods: ContentMood[];
+  topics: string[];
+  moods: string[];
   sourceLabel: string;
   sourceUrl: string;
   body: string;
@@ -50,12 +50,15 @@ export interface AdminListQuery {
   status: "all" | ContentStatus;
   q: string;
   kind: ContentKind | "";
-  topic: ContentTopic | "";
+  topic: string;
   sort: AdminSort;
   review: boolean;
   cursor: { sort: AdminSort; at: number; id: string } | null;
   limit: number;
 }
+
+const MAX_DRAFT_TOPICS = 8;
+const MAX_DRAFT_MOODS = 6;
 
 const LIMITS = {
   title: 280,
@@ -84,20 +87,18 @@ function oneOf<T extends string>(
   return allowed.includes(value as T) ? (value as T) : null;
 }
 
-function manyOf<T extends string>(
-  value: unknown,
-  allowed: readonly T[]
-): T[] | null {
-  if (!Array.isArray(value) || value.length > allowed.length) {
+/** Danh sách slug catalog (chủ đề / tâm trạng) — format, không whitelist cứng. */
+function slugList(value: unknown, max: number): string[] | null {
+  if (!Array.isArray(value) || value.length > max) {
     return null;
   }
 
-  const chosen: T[] = [];
+  const chosen: string[] = [];
 
   for (const item of value) {
-    const match = oneOf(item, allowed);
-    if (!match || chosen.includes(match)) return null;
-    chosen.push(match);
+    if (typeof item !== "string" || !isCatalogSlug(item)) return null;
+    if (chosen.includes(item)) return null;
+    chosen.push(item);
   }
 
   return chosen;
@@ -114,9 +115,37 @@ function httpUrl(value: string): boolean {
   }
 }
 
+function parseMediaSizeFields(
+  source: Record<string, unknown>
+):
+  | { ok: true; width: number | null; height: number | null }
+  | { ok: false; error: string } {
+  const width = parseImageSize(source.imageWidth);
+  if (
+    source.imageWidth !== undefined &&
+    source.imageWidth !== null &&
+    source.imageWidth !== "" &&
+    width === null
+  ) {
+    return { ok: false, error: "Chiều rộng media không hợp lệ." };
+  }
+
+  const height = parseImageSize(source.imageHeight);
+  if (
+    source.imageHeight !== undefined &&
+    source.imageHeight !== null &&
+    source.imageHeight !== "" &&
+    height === null
+  ) {
+    return { ok: false, error: "Chiều cao media không hợp lệ." };
+  }
+
+  return { ok: true, width, height };
+}
+
 /**
- * Form bien tap gui title / topics / moods / body|image|poll / nguon / format.
- * description, kind, theme, category, tag do server gan theo chu de dau.
+ * Form biên tập: bài viết (chữ ± ảnh) | video | poll.
+ * Có URL ảnh → format image; không → text. Theme DB cố định (atmosphere lo nền).
  */
 export function parseContentDraft(
   input: unknown
@@ -132,14 +161,17 @@ export function parseContentDraft(
   const sourceLabel = text(source.sourceLabel, LIMITS.sourceLabel);
   const sourceUrl = text(source.sourceUrl, LIMITS.sourceUrl);
   const body = text(source.body, LIMITS.body);
-  const topics = manyOf(source.topics, contentTopics);
-  const moods = manyOf(source.moods, contentMoods);
-  let format: ContentFormat = "text";
+  const topics = slugList(source.topics, MAX_DRAFT_TOPICS);
+  const moods = slugList(source.moods, MAX_DRAFT_MOODS);
 
-  if (source.format === "poll") format = "poll";
-  else if (source.format === "image") format = "image";
-  else if (source.format === "video") format = "video";
-  else if (source.format !== undefined && source.format !== "text") {
+  let kind: "story" | "video" | "poll" = "story";
+  if (source.format === "poll") kind = "poll";
+  else if (source.format === "video") kind = "video";
+  else if (
+    source.format !== undefined &&
+    source.format !== "text" &&
+    source.format !== "image"
+  ) {
     return { ok: false, error: "Định dạng không hợp lệ." };
   }
 
@@ -147,13 +179,11 @@ export function parseContentDraft(
     return {
       ok: false,
       error:
-        format === "poll"
+        kind === "poll"
           ? "Hãy nhập câu hỏi."
-          : format === "image"
-            ? "Hãy nhập chú thích ảnh."
-            : format === "video"
-              ? "Hãy nhập chú thích video."
-              : "Hãy nhập câu chữ chính."
+          : kind === "video"
+            ? "Hãy nhập chú thích video."
+            : "Hãy nhập câu chữ chính."
     };
   }
 
@@ -169,6 +199,7 @@ export function parseContentDraft(
     return { ok: false, error: "Liên kết nguồn không hợp lệ." };
   }
 
+  let format: ContentFormat = "text";
   let imageUrl = "";
   let imageAlt = "";
   let imageWidth: number | null = null;
@@ -180,72 +211,46 @@ export function parseContentDraft(
     return { ok: false, error: "Danh sách bộ sưu tập không hợp lệ." };
   }
 
-  if (format === "image" || format === "video") {
+  if (kind === "video") {
+    format = "video";
     const url = parseHttpsMediaUrl(source.imageUrl);
     if (!url) {
       return {
         ok: false,
-        error:
-          format === "video"
-            ? "Cần URL video HTTPS hoặc đường dẫn /api/media/… hợp lệ."
-            : "Cần URL ảnh HTTPS hoặc đường dẫn /api/media/… hợp lệ."
+        error: "Cần URL video HTTPS hoặc đường dẫn /api/media/… hợp lệ."
       };
     }
 
     const alt = parseImageAlt(source.imageAlt);
     if (alt === null) {
-      return {
-        ok: false,
-        error:
-          format === "video" ? "Mô tả video quá dài." : "Mô tả ảnh quá dài."
-      };
+      return { ok: false, error: "Mô tả video quá dài." };
     }
 
-    const width = parseImageSize(source.imageWidth);
-    if (
-      source.imageWidth !== undefined &&
-      source.imageWidth !== null &&
-      source.imageWidth !== "" &&
-      width === null
-    ) {
-      return { ok: false, error: "Chiều rộng media không hợp lệ." };
-    }
-
-    const height = parseImageSize(source.imageHeight);
-    if (
-      source.imageHeight !== undefined &&
-      source.imageHeight !== null &&
-      source.imageHeight !== "" &&
-      height === null
-    ) {
-      return { ok: false, error: "Chiều cao media không hợp lệ." };
-    }
+    const sizes = parseMediaSizeFields(source);
+    if (!sizes.ok) return sizes;
 
     imageUrl = url;
     imageAlt = alt;
-    imageWidth = width;
-    imageHeight = height;
+    imageWidth = sizes.width;
+    imageHeight = sizes.height;
 
-    if (format === "video") {
-      const posterRaw = source.posterUrl;
-      if (
-        posterRaw !== undefined &&
-        posterRaw !== null &&
-        posterRaw !== ""
-      ) {
-        const poster = parseHttpsMediaUrl(posterRaw);
-        if (!poster) {
-          return {
-            ok: false,
-            error: "Ảnh xem trước phải là HTTPS hoặc /api/media/… hợp lệ."
-          };
-        }
-        posterUrl = poster;
+    const posterRaw = source.posterUrl;
+    if (
+      posterRaw !== undefined &&
+      posterRaw !== null &&
+      posterRaw !== ""
+    ) {
+      const poster = parseHttpsMediaUrl(posterRaw);
+      if (!poster) {
+        return {
+          ok: false,
+          error: "Ảnh xem trước phải là HTTPS hoặc /api/media/… hợp lệ."
+        };
       }
+      posterUrl = poster;
     }
-  }
-
-  if (format === "poll") {
+  } else if (kind === "poll") {
+    format = "poll";
     const options = parsePollOptions(source.pollOptions);
     if (!options) {
       return {
@@ -254,6 +259,35 @@ export function parseContentDraft(
       };
     }
     pollOptions = options;
+  } else {
+    // Bài viết: ảnh tùy chọn → image; không ảnh → text.
+    const rawUrl =
+      typeof source.imageUrl === "string" ? source.imageUrl.trim() : "";
+    if (rawUrl) {
+      const url = parseHttpsMediaUrl(rawUrl);
+      if (!url) {
+        return {
+          ok: false,
+          error: "Cần URL ảnh HTTPS hoặc đường dẫn /api/media/… hợp lệ."
+        };
+      }
+
+      const alt = parseImageAlt(source.imageAlt);
+      if (alt === null) {
+        return { ok: false, error: "Mô tả ảnh quá dài." };
+      }
+
+      const sizes = parseMediaSizeFields(source);
+      if (!sizes.ok) return sizes;
+
+      format = "image";
+      imageUrl = url;
+      imageAlt = alt;
+      imageWidth = sizes.width;
+      imageHeight = sizes.height;
+    } else {
+      format = "text";
+    }
   }
 
   return {
@@ -268,7 +302,7 @@ export function parseContentDraft(
       moods,
       sourceLabel,
       sourceUrl,
-      body: format === "text" ? body : "",
+      body: format === "poll" ? "" : body,
       imageUrl,
       imageAlt,
       imageWidth,
@@ -276,7 +310,8 @@ export function parseContentDraft(
       posterUrl,
       pollOptions,
       collectionIds,
-      ...lookFromTopic(topics[0])
+      theme: DEFAULT_CONTENT_THEME,
+      category: categoryForTopicSlug(topics[0])
     }
   };
 }
@@ -357,7 +392,9 @@ export function parseAdminListQuery(params: {
 
   const topicValue = params.topic ?? "";
   const topic = topicValue
-    ? oneOf(topicValue, contentTopics)
+    ? isCatalogSlug(topicValue)
+      ? topicValue
+      : null
     : "";
 
   if (topic === null) {

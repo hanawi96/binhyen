@@ -158,8 +158,10 @@ export interface ContentItem {
 
   theme: ContentTheme;
 
-  topics: ContentTopic[];
-  suitableMoods: ContentMood[];
+  /** Slug chủ đề (preset hoặc mục catalog mới). */
+  topics: string[];
+  /** Slug tâm trạng (preset hoặc mục catalog mới). */
+  suitableMoods: string[];
 
   /**
    * Nhan chu de dau (tu bang topics.label) — dung hien tren the.

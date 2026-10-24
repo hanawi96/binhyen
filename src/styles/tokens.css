@@ -105,6 +105,8 @@
   /* Layout */
   --container-width: 1200px;
   --reading-width: 680px;
+  /* Admin shell: sidebar on desktop; drawer at max-width 1023px */
+  --admin-sidebar-width: 240px;
 
   /* Animation */
   --duration-fast: 150ms;

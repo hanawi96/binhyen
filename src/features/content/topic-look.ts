@@ -1,6 +1,6 @@
-import type { ContentTheme, ContentTopic } from "./content.types";
+import { isContentTopic, type ContentTopic } from "./content.types";
 
-/** Ten chu de hien thi tren the / bo loc (khac category nhom mau). */
+/** Tên chủ đề hiển thị trên thẻ / bộ lọc (preset). */
 export const topicLabels: Record<ContentTopic, string> = {
   peace: "Bình yên",
   stories: "Câu chuyện",
@@ -12,36 +12,35 @@ export const topicLabels: Record<ContentTopic, string> = {
   tips: "Mẹo thú vị"
 };
 
-/** Nhom hien thi va mau the lay theo chu de (khong chon tay tren form). */
-export const topicLook: Record<
-  ContentTopic,
-  { theme: ContentTheme; category: string }
-> = {
-  peace: { theme: "peace", category: "Chữa lành & bình yên" },
-  stories: { theme: "story", category: "Góc nhìn cuộc sống" },
-  science: { theme: "discovery", category: "Kiến thức kỳ thú" },
-  nature: { theme: "nature", category: "Thiên nhiên kỳ thú" },
-  psychology: { theme: "psychology", category: "Tâm lý học dễ hiểu" },
-  perspective: { theme: "story", category: "Góc nhìn cuộc sống" },
-  cute: { theme: "cute", category: "Những điều dễ thương" },
-  tips: { theme: "discovery", category: "Kiến thức kỳ thú" }
+/** Nhóm chữ (category) theo chủ đề preset — không gắn màu thẻ. */
+export const topicCategories: Record<ContentTopic, string> = {
+  peace: "Chữa lành & bình yên",
+  stories: "Góc nhìn cuộc sống",
+  science: "Kiến thức kỳ thú",
+  nature: "Thiên nhiên kỳ thú",
+  psychology: "Tâm lý học dễ hiểu",
+  perspective: "Góc nhìn cuộc sống",
+  cute: "Những điều dễ thương",
+  tips: "Kiến thức kỳ thú"
 };
 
-export function lookFromTopic(topic: ContentTopic): {
-  theme: ContentTheme;
-  category: string;
-} {
-  return topicLook[topic];
+/** Theme cột DB cố định — nền feed dùng atmosphere preset, không theo chủ đề. */
+export const DEFAULT_CONTENT_THEME = "peace" as const;
+
+export function categoryFromTopic(topic: ContentTopic): string {
+  return topicCategories[topic];
 }
 
-/** Chu de dau tien tren the; thieu thi de chuoi rong. */
+/** Category cho slug bất kỳ (preset hoặc mới từ catalog). */
+export function categoryForTopicSlug(slug: string): string {
+  return isContentTopic(slug) ? topicCategories[slug] : "Khác";
+}
+
+/** Chủ đề đầu tiên trên thẻ; thiếu thì chuỗi rỗng. */
 export function primaryTopicLabel(
   topics: readonly string[] | undefined
 ): string {
   const first = topics?.[0];
   if (!first) return "";
-  return (
-    topicLabels[first as ContentTopic] ??
-    first
-  );
+  return topicLabels[first as ContentTopic] ?? first;
 }

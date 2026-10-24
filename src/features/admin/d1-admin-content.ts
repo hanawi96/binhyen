@@ -6,18 +6,15 @@ import { contentFingerprint, normalizeSlug } from "../content/content-lifecycle"
 import { readContentFormat } from "../content/content-format";
 import {
   contentKinds,
-  contentMoods,
   contentThemes,
-  contentTopics,
   type ContentFormat,
   type ContentKind,
-  type ContentMood,
   type ContentStatus,
-  type ContentTheme,
-  type ContentTopic
+  type ContentTheme
 } from "../content/content.types";
 import { adminJson } from "./admin-http";
 import { pollOptionId } from "../interactions/content-polls";
+import { isCatalogSlug } from "./catalog";
 import type { AdminListQuery, ContentDraftInput } from "./content-draft";
 import {
   encodeAdminCursor,
@@ -35,7 +32,7 @@ export interface AdminListItem {
   kind: ContentKind;
   theme: ContentTheme;
   status: ContentStatus;
-  topics: ContentTopic[];
+  topics: string[];
   reviewReasons: ReviewReason[];
   createdAt: number;
   updatedAt: number;
@@ -64,8 +61,8 @@ export interface AdminContent {
   description: string;
   tag: string;
   theme: ContentTheme;
-  topics: ContentTopic[];
-  moods: ContentMood[];
+  topics: string[];
+  moods: string[];
   sourceLabel: string;
   sourceUrl: string;
   body: string;
@@ -135,17 +132,13 @@ function known<T extends string>(
   return allowed.includes(value as T) ? (value as T) : null;
 }
 
-function splitKnown<T extends string>(
-  value: string | null,
-  allowed: readonly T[]
-): T[] {
+function splitCatalogSlugs(value: string | null): string[] {
   if (!value) return [];
 
-  const chosen: T[] = [];
+  const chosen: string[] = [];
 
   for (const part of value.split(",")) {
-    const match = known(part, allowed);
-    if (match && !chosen.includes(match)) chosen.push(match);
+    if (isCatalogSlug(part) && !chosen.includes(part)) chosen.push(part);
   }
 
   return chosen;
@@ -175,8 +168,8 @@ function mapDetail(row: DetailRow): AdminContent {
     description: row.description,
     tag: row.tag,
     theme,
-    topics: splitKnown(row.topics_csv, contentTopics),
-    moods: splitKnown(row.moods_csv, contentMoods),
+    topics: splitCatalogSlugs(row.topics_csv),
+    moods: splitCatalogSlugs(row.moods_csv),
     sourceLabel: row.source_label ?? "",
     sourceUrl: row.source_url ?? "",
     body: row.body_markdown ?? "",
@@ -381,7 +374,7 @@ export async function listAdminContents(
       kind,
       theme,
       status,
-      topics: splitKnown(row.topics_csv, contentTopics),
+      topics: splitCatalogSlugs(row.topics_csv),
       reviewReasons: reviewReasonsFrom(row.review_marks),
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -435,12 +428,12 @@ export async function loadAdminCatalog(
   ]);
 
   return {
-    topics: (topics.results ?? []).filter((row) =>
-      known(row.slug, contentTopics)
-    ),
-    moods: (moods.results ?? []).filter((row) =>
-      known(row.slug, contentMoods)
-    )
+    topics: (topics.results ?? [])
+      .filter((row) => isCatalogSlug(row.slug))
+      .map((row) => ({ slug: row.slug, label: row.label })),
+    moods: (moods.results ?? [])
+      .filter((row) => isCatalogSlug(row.slug))
+      .map((row) => ({ slug: row.slug, label: row.label }))
   };
 }
 
@@ -640,7 +633,12 @@ function childStatements(
     );
   }
 
-  if (draft.format === "text" && draft.body) {
+  if (
+    (draft.format === "text" ||
+      draft.format === "image" ||
+      draft.format === "video") &&
+    draft.body
+  ) {
     statements.push(
       db
         .prepare(

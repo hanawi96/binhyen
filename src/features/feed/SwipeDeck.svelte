@@ -227,15 +227,6 @@
       });
   }
 
-  const readMarks: Record<string, string> = {
-    peace: "❋",
-    discovery: "✧",
-    story: "✳",
-    nature: "❀",
-    psychology: "☼",
-    cute: "♡"
-  };
-
   // Thich / luu / chia se. Cookie an danh chi tao o lan bam dau tien.
   type Reaction = {
     liked: boolean;
@@ -2724,7 +2715,7 @@
                       <span class="reader-line">
                         {#if lineIndex === 0}
                           <span class="reader-ornament" aria-hidden="true"
-                            >{readMarks[item.theme] ?? "❋"}</span
+                            >❋</span
                           >
                         {/if}
                         {line}
