@@ -14,6 +14,7 @@
     MoodFilter
   } from "../content/filter-contents";
   import { isTopicFilter } from "../content/filter-contents";
+  import AmbientPanel from "../ambient/AmbientPanel.svelte";
   import ThemeToggle from "../theme/ThemeToggle.svelte";
   import {
     invalidateMine,
@@ -1669,7 +1670,10 @@
         </button>
       {/each}
     </nav>
-    <ThemeToggle />
+    <div class="topbar-tools">
+      <AmbientPanel />
+      <ThemeToggle />
+    </div>
   </header>
   <div
     class="deck-viewport"
@@ -2569,6 +2573,13 @@
     flex: 0 0 auto;
     min-width: 0;
     padding: 20px 30px 0 18px;
+  }
+
+  .topbar-tools {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
   }
 
   .sections {

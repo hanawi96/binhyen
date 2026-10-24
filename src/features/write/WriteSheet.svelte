@@ -39,7 +39,6 @@
   const topicsId = `write-topics-${uid}`;
 
   let title = $state("");
-  let description = $state("");
   let body = $state("");
   let chosen = $state<string[]>([]);
   let busy = $state(false);
@@ -55,7 +54,6 @@
 
   function reset() {
     title = "";
-    description = "";
     body = "";
     chosen = [];
     error = "";
@@ -85,7 +83,6 @@
 
     const known = new Set(topics.map((topic) => topic.key));
     title = result.draft.title;
-    description = result.draft.description;
     body = result.draft.body;
     chosen = result.draft.topics.filter((key) => known.has(key));
     editState = "ready";
@@ -130,7 +127,7 @@
     busy = true;
     error = "";
 
-    const fields = { title, description, body, topics: chosen };
+    const fields = { title, description: "", body, topics: chosen };
 
     if (edit) {
       const result = await updatePost(edit.id, fields);
@@ -220,16 +217,6 @@
             <span class="write-count">{title.length}/{TITLE_MAX}</span>
           {/if}
         </div>
-
-        <label class="write-field">
-          <span>Mô tả ngắn</span>
-          <input
-            type="text"
-            maxlength="400"
-            placeholder="Không bắt buộc"
-            bind:value={description}
-          />
-        </label>
 
         <label class="write-field">
           <span>Nội dung</span>

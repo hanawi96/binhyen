@@ -1,9 +1,11 @@
 import { contentFingerprint, normalizeSlug } from "../content/content-lifecycle";
+import { readContentFormat } from "../content/content-format";
 import {
   contentKinds,
   contentMoods,
   contentThemes,
   contentTopics,
+  type ContentFormat,
   type ContentKind,
   type ContentMood,
   type ContentStatus,
@@ -11,6 +13,7 @@ import {
   type ContentTopic
 } from "../content/content.types";
 import { adminJson } from "./admin-http";
+import { pollOptionId } from "../interactions/content-polls";
 import type { AdminListQuery, ContentDraftInput } from "./content-draft";
 import {
   encodeAdminCursor,
@@ -18,7 +21,7 @@ import {
   readingMinutes
 } from "./content-draft";
 
-export type ReviewReason = "description" | "topic";
+export type ReviewReason = "topic";
 
 export interface AdminListItem {
   id: string;
@@ -49,6 +52,7 @@ export interface AdminCatalogItem {
 export interface AdminContent {
   id: string;
   slug: string;
+  format: ContentFormat;
   kind: ContentKind;
   status: ContentStatus;
   category: string;
@@ -61,6 +65,12 @@ export interface AdminContent {
   sourceLabel: string;
   sourceUrl: string;
   body: string;
+  imageUrl: string;
+  imageAlt: string;
+  imageWidth: number | null;
+  imageHeight: number | null;
+  posterUrl: string;
+  pollOptions: string[];
   updatedAt: number;
   publishedAt: number | null;
 }
@@ -91,6 +101,7 @@ interface ListRow {
 interface DetailRow {
   id: string;
   slug: string;
+  format: string;
   kind: string;
   status: string;
   category: string;
@@ -151,6 +162,7 @@ function mapDetail(row: DetailRow): AdminContent {
   return {
     id: row.id,
     slug: row.slug,
+    format: readContentFormat(row.format),
     kind,
     status,
     category: row.category,
@@ -163,13 +175,19 @@ function mapDetail(row: DetailRow): AdminContent {
     sourceLabel: row.source_label ?? "",
     sourceUrl: row.source_url ?? "",
     body: row.body_markdown ?? "",
+    imageUrl: "",
+    imageAlt: "",
+    imageWidth: null,
+    imageHeight: null,
+    posterUrl: "",
+    pollOptions: [],
     updatedAt: row.updated_at,
     publishedAt: row.published_at
   };
 }
 
 const detailSql = `SELECT
-  c.id, c.slug, c.kind, c.status, c.category, c.title,
+  c.id, c.slug, c.format, c.kind, c.status, c.category, c.title,
   c.description, c.tag, c.theme, c.source_label, c.source_url,
   c.updated_at, c.published_at, d.body_markdown,
   (
@@ -188,17 +206,13 @@ WHERE c.id = ?1`;
 
 // Mo rong sau nay: them dieu kien "gan giong" vao cung predicate,
 // khong doi mang reviewReasons.
-const reviewPredicate = `(
-  c.description = ''
-  OR NOT EXISTS (
-    SELECT 1
-    FROM content_topics review_topic
-    WHERE review_topic.content_id = c.id
-  )
+const reviewPredicate = `NOT EXISTS (
+  SELECT 1
+  FROM content_topics review_topic
+  WHERE review_topic.content_id = c.id
 )`;
 
 const reviewMarks = `TRIM(
-  CASE WHEN c.description = '' THEN 'description ' ELSE '' END ||
   CASE
     WHEN NOT EXISTS (
       SELECT 1
@@ -256,10 +270,7 @@ function reviewReasonsFrom(marks: string | null): ReviewReason[] {
   const reasons: ReviewReason[] = [];
 
   for (const part of marks.split(" ")) {
-    if (
-      (part === "description" || part === "topic") &&
-      !reasons.includes(part)
-    ) {
+    if (part === "topic" && !reasons.includes(part)) {
       reasons.push(part);
     }
   }
@@ -323,12 +334,11 @@ export async function listAdminContents(
            COALESCE(SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), 0) AS published,
            COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS drafts,
            COALESCE(SUM(CASE
-             WHEN description = ''
-               OR NOT EXISTS (
-                 SELECT 1
-                 FROM content_topics review_topic
-                 WHERE review_topic.content_id = contents.id
-               )
+             WHEN NOT EXISTS (
+               SELECT 1
+               FROM content_topics review_topic
+               WHERE review_topic.content_id = contents.id
+             )
              THEN 1
              ELSE 0
            END), 0) AS review
@@ -437,7 +447,45 @@ export async function getAdminContent(
     .bind(id)
     .first<DetailRow>();
 
-  return row ? mapDetail(row) : null;
+  if (!row) return null;
+
+  const detail = mapDetail(row);
+  const [pollRows, media] = await Promise.all([
+    db
+      .prepare(
+        `SELECT label
+         FROM poll_options
+         WHERE content_id = ?1
+         ORDER BY sort_order, option_id`
+      )
+      .bind(id)
+      .all<{ label: string }>(),
+    db
+      .prepare(
+        `SELECT url, alt, poster_url, width, height
+         FROM content_media
+         WHERE content_id = ?1
+         LIMIT 1`
+      )
+      .bind(id)
+      .first<{
+        url: string;
+        alt: string;
+        poster_url: string | null;
+        width: number | null;
+        height: number | null;
+      }>()
+  ]);
+
+  return {
+    ...detail,
+    imageUrl: media?.url ?? "",
+    imageAlt: media?.alt ?? "",
+    imageWidth: media?.width ?? null,
+    imageHeight: media?.height ?? null,
+    posterUrl: media?.poster_url ?? "",
+    pollOptions: pollRows.results.map((item) => item.label)
+  };
 }
 
 function createContentId(): string {
@@ -549,6 +597,16 @@ function childStatements(
       .prepare(
         `DELETE FROM content_details WHERE content_id = ?1`
       )
+      .bind(id),
+    db
+      .prepare(
+        `DELETE FROM poll_options WHERE content_id = ?1`
+      )
+      .bind(id),
+    db
+      .prepare(
+        `DELETE FROM content_media WHERE content_id = ?1`
+      )
       .bind(id)
   ];
 
@@ -574,7 +632,7 @@ function childStatements(
     );
   }
 
-  if (draft.body) {
+  if (draft.format === "text" && draft.body) {
     statements.push(
       db
         .prepare(
@@ -585,6 +643,47 @@ function childStatements(
         )
         .bind(id, draft.body, readingMinutes(draft.body))
     );
+  }
+
+  if (
+    (draft.format === "image" || draft.format === "video") &&
+    draft.imageUrl
+  ) {
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO content_media (
+             content_id, kind, url, alt, poster_url, width, height
+           )
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+        )
+        .bind(
+          id,
+          draft.format === "video" ? "video" : "image",
+          draft.imageUrl,
+          draft.imageAlt,
+          draft.format === "video" && draft.posterUrl
+            ? draft.posterUrl
+            : null,
+          draft.imageWidth,
+          draft.imageHeight
+        )
+    );
+  }
+
+  if (draft.format === "poll") {
+    draft.pollOptions.forEach((label, index) => {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO poll_options (
+               content_id, option_id, label, sort_order
+             )
+             VALUES (?1, ?2, ?3, ?4)`
+          )
+          .bind(id, pollOptionId(index), label, index)
+      );
+    });
   }
 
   return statements;
@@ -605,18 +704,19 @@ export async function createAdminContent(
       db
         .prepare(
           `INSERT INTO contents (
-             id, slug, kind, status, category, title, description, tag,
+             id, slug, format, kind, status, category, title, description, tag,
              theme, source_label, source_url, normalized_hash,
              created_at, updated_at, published_at, author_id
            )
            VALUES (
-             ?1, ?2, ?3, 'draft', ?4, ?5, ?6, ?7,
-             ?8, ?9, ?10, ?11, ?12, ?12, NULL, ?13
+             ?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8,
+             ?9, ?10, ?11, ?12, ?13, ?13, NULL, ?14
            )`
         )
         .bind(
           id,
           slug,
+          draft.format,
           draft.kind,
           draft.category,
           draft.title,
@@ -688,22 +788,24 @@ export async function updateAdminContent(
       .prepare(
         `UPDATE contents
          SET slug = ?1,
-             kind = ?2,
-             category = ?3,
-             title = ?4,
-             description = ?5,
-             tag = ?6,
-             theme = ?7,
-             source_label = ?8,
-             source_url = ?9,
-             normalized_hash = ?10,
-             updated_at = ?11
-         WHERE id = ?12
+             format = ?2,
+             kind = ?3,
+             category = ?4,
+             title = ?5,
+             description = ?6,
+             tag = ?7,
+             theme = ?8,
+             source_label = ?9,
+             source_url = ?10,
+             normalized_hash = ?11,
+             updated_at = ?12
+         WHERE id = ?13
            AND status != 'archived'
-           AND (?13 IS NULL OR (author_id = ?13 AND status = 'draft'))`
+           AND (?14 IS NULL OR (author_id = ?14 AND status = 'draft'))`
       )
       .bind(
         slug,
+        draft.format,
         draft.kind,
         draft.category,
         draft.title,

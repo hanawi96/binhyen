@@ -14,6 +14,10 @@ import {
   readJsonBody,
   validContentId
 } from "../../../../features/interactions/interaction-http";
+import {
+  gcContentMediaChange,
+  listContentMediaRefs
+} from "../../../../features/media/media-gc";
 import { createD1MyPostStore } from "../../../../features/posts/d1-my-posts";
 import { parsePostDraft } from "../../../../features/posts/post-draft";
 
@@ -99,6 +103,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
     if (!status) return notFound();
     if (status !== "draft") return locked();
 
+    const mediaBefore = await listContentMediaRefs(env.DB, params.id);
     const content = await updateAdminContent(
       env.DB,
       params.id,
@@ -106,6 +111,9 @@ export const PUT: APIRoute = async ({ request, params }) => {
       now(),
       user.id
     );
+    const mediaAfter = await listContentMediaRefs(env.DB, params.id);
+    await gcContentMediaChange(env.MEDIA, mediaBefore, mediaAfter);
+
     return interactionJson({
       success: true,
       id: content.id,
@@ -135,7 +143,10 @@ export const DELETE: APIRoute = async ({ request, params }) => {
     if (!user) return unauthorized();
 
     const store = createD1MyPostStore(env.DB);
+    const mediaBefore = await listContentMediaRefs(env.DB, params.id);
+
     if (await store.withdraw(user.id, params.id)) {
+      await gcContentMediaChange(env.MEDIA, mediaBefore, []);
       return interactionJson({ success: true });
     }
 

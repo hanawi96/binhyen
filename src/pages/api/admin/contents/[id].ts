@@ -13,6 +13,10 @@ import {
   updateAdminContent
 } from "../../../../features/admin/d1-admin-content";
 import { requireAdmin } from "../../../../features/admin/require-admin";
+import {
+  gcContentMediaChange,
+  listContentMediaRefs
+} from "../../../../features/media/media-gc";
 
 export const prerender = false;
 
@@ -76,12 +80,15 @@ export const PATCH: APIRoute = async ({ request, params }) => {
   }
 
   try {
+    const mediaBefore = await listContentMediaRefs(env.DB, id);
     const content = await updateAdminContent(
       env.DB,
       id,
       draft.value,
       nowSeconds()
     );
+    const mediaAfter = await listContentMediaRefs(env.DB, id);
+    await gcContentMediaChange(env.MEDIA, mediaBefore, mediaAfter);
 
     return adminJson({ success: true, content }, 200);
   } catch (error) {

@@ -13,6 +13,11 @@
     "test": "vitest run",
     "backup:local": "node scripts/backup-local-d1.mjs",
     "seed:demo": "node scripts/seed-demo-catalog.mjs",
+    "seed:bench": "node scripts/seed-feed-bench.mjs",
+    "seed:poll": "node scripts/seed-demo-poll.mjs",
+    "seed:image": "node scripts/seed-demo-image.mjs",
+    "seed:video": "node scripts/seed-demo-video.mjs",
+    "measure:bench": "node scripts/measure-feed-bench.mjs",
     "generate-types": "wrangler types"
   },
   "dependencies": {

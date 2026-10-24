@@ -1,0 +1,339 @@
+import {
+  clampVolume,
+  DEFAULT_AMBIENT_PREFS,
+  readAmbientPrefs,
+  writeAmbientPrefs,
+  type AmbientPrefs
+} from "./ambient-prefs";
+import {
+  findAmbientTrack,
+  getAmbientCatalog,
+  getAmbientDefaultId,
+  setAmbientCatalog,
+  type AmbientTrack
+} from "./tracks";
+
+export interface AmbientSnapshot {
+  enabled: boolean;
+  playing: boolean;
+  volume: number;
+  trackId: string;
+  trackTitle: string;
+  tracks: readonly AmbientTrack[];
+  error: string;
+}
+
+type Listener = () => void;
+
+let audio: HTMLAudioElement | null = null;
+let prefs: AmbientPrefs = { ...DEFAULT_AMBIENT_PREFS };
+let playing = false;
+let error = "";
+let hydrated = false;
+let unlockArmed = false;
+let catalogReady = false;
+let catalogPromise: Promise<void> | null = null;
+/** Tang moi lan tryPlay / stop — huy luong play cu. */
+let playEpoch = 0;
+let pageExitBound = false;
+const listeners = new Set<Listener>();
+
+function notify(): void {
+  for (const listener of listeners) listener();
+}
+
+function ensureAudio(): HTMLAudioElement {
+  if (audio) return audio;
+
+  audio = new Audio();
+  audio.loop = true;
+  audio.preload = "none";
+  audio.volume = clampVolume(prefs.volume);
+
+  audio.addEventListener("playing", () => {
+    if (!prefs.enabled) {
+      // Play xen ke sau khi user da tat — dung ngay.
+      stopHard();
+      return;
+    }
+    playing = true;
+    error = "";
+    notify();
+  });
+  audio.addEventListener("pause", () => {
+    playing = false;
+    notify();
+  });
+  audio.addEventListener("error", () => {
+    if (!prefs.enabled || !audio?.getAttribute("src")) return;
+    playing = false;
+    error = "Không phát được bài này.";
+    notify();
+  });
+
+  return audio;
+}
+
+function persist(): void {
+  writeAmbientPrefs(prefs);
+}
+
+function applyTrack(track: AmbientTrack): void {
+  const node = ensureAudio();
+  const next = track.src;
+  const current = node.getAttribute("src");
+  if (current === next) return;
+
+  node.pause();
+  node.src = next;
+  node.load();
+}
+
+function disarmUnlock(): void {
+  unlockArmed = false;
+}
+
+function armUnlock(): void {
+  if (unlockArmed || typeof document === "undefined") return;
+  if (!prefs.enabled) return;
+  unlockArmed = true;
+
+  const unlock = () => {
+    if (!unlockArmed) return;
+    disarmUnlock();
+    document.removeEventListener("pointerdown", unlock, true);
+    document.removeEventListener("keydown", unlock, true);
+    // Khong goi tryPlay trong cung gesture tat nhac — chi khi van dang bat.
+    if (prefs.enabled && !playing) {
+      queueMicrotask(() => {
+        if (prefs.enabled && !playing) void tryPlay();
+      });
+    }
+  };
+
+  document.addEventListener("pointerdown", unlock, true);
+  document.addEventListener("keydown", unlock, true);
+}
+
+function bindPageExit(): void {
+  if (pageExitBound || typeof window === "undefined") return;
+  pageExitBound = true;
+
+  // Dong tab/trinh duyet — dung audio ngay (khong doi prefs da luu).
+  window.addEventListener("pagehide", () => {
+    stopHard();
+  });
+}
+
+async function tryPlay(): Promise<void> {
+  if (!prefs.enabled) {
+    stopHard();
+    return;
+  }
+
+  const epoch = ++playEpoch;
+  const track = findAmbientTrack(prefs.trackId);
+  if (!track) {
+    if (catalogReady) {
+      error = "Chưa có bài nhạc. Vào /admin/ambient để upload.";
+    }
+    playing = false;
+    notify();
+    return;
+  }
+
+  const node = ensureAudio();
+  applyTrack(track);
+  node.volume = clampVolume(prefs.volume);
+  error = "";
+
+  if (!prefs.enabled || epoch !== playEpoch) {
+    stopHard();
+    return;
+  }
+
+  try {
+    await node.play();
+    // Quan trong: play() thanh cong nhung user da tat / epoch doi → pause ngay.
+    if (!prefs.enabled || epoch !== playEpoch) {
+      node.pause();
+      node.removeAttribute("src");
+      node.load();
+      playing = false;
+      return;
+    }
+    playing = true;
+    disarmUnlock();
+  } catch {
+    if (!prefs.enabled || epoch !== playEpoch) return;
+    playing = false;
+    armUnlock();
+  }
+
+  notify();
+}
+
+function stopHard(): void {
+  playEpoch += 1;
+  disarmUnlock();
+  playing = false;
+
+  if (!audio) return;
+
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+  } catch {
+    // ignore
+  }
+
+  audio.removeAttribute("src");
+  try {
+    audio.src = "";
+    audio.load();
+  } catch {
+    // ignore
+  }
+}
+
+export function subscribeAmbient(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function getAmbientSnapshot(): AmbientSnapshot {
+  const track = findAmbientTrack(prefs.trackId);
+  return {
+    enabled: prefs.enabled,
+    playing,
+    volume: prefs.volume,
+    trackId: track?.id ?? prefs.trackId,
+    trackTitle: track?.title ?? "Nhạc nền",
+    tracks: getAmbientCatalog(),
+    error
+  };
+}
+
+/**
+ * Tai catalog tu API. Khong phat nhac o day — hydrate goi tryPlay sau.
+ */
+async function loadRemoteCatalog(): Promise<void> {
+  if (catalogReady) return;
+  if (catalogPromise) {
+    await catalogPromise;
+    return;
+  }
+
+  catalogPromise = (async () => {
+    if (typeof fetch === "undefined") return;
+
+    try {
+      const response = await fetch("/api/ambient/tracks", {
+        headers: { accept: "application/json" }
+      });
+      if (!response.ok) return;
+
+      const body: unknown = await response.json();
+      if (!body || typeof body !== "object") return;
+
+      const payload = body as {
+        tracks?: unknown;
+        defaultId?: unknown;
+      };
+      if (!Array.isArray(payload.tracks)) return;
+
+      const tracks: AmbientTrack[] = [];
+      for (const item of payload.tracks) {
+        if (!item || typeof item !== "object") continue;
+        const row = item as Record<string, unknown>;
+        if (
+          typeof row.id !== "string" ||
+          typeof row.title !== "string" ||
+          typeof row.src !== "string"
+        ) {
+          continue;
+        }
+        tracks.push({ id: row.id, title: row.title, src: row.src });
+      }
+
+      setAmbientCatalog(
+        tracks,
+        typeof payload.defaultId === "string" ? payload.defaultId : null
+      );
+
+      if (
+        tracks.length > 0 &&
+        !tracks.some((t) => t.id === prefs.trackId)
+      ) {
+        prefs = { ...prefs, trackId: getAmbientDefaultId() };
+        persist();
+      }
+    } catch {
+      // Giu catalog hien tai.
+    } finally {
+      catalogReady = true;
+    }
+  })();
+
+  await catalogPromise;
+}
+
+/** Doc preference; chi phat sau khi catalog remote san sang (tranh 404 fallback). */
+export function hydrateAmbientPrefs(): void {
+  if (hydrated) return;
+  hydrated = true;
+  prefs = readAmbientPrefs();
+  bindPageExit();
+  notify();
+
+  void (async () => {
+    await loadRemoteCatalog();
+    notify();
+    if (prefs.enabled) {
+      await tryPlay();
+    }
+  })();
+}
+
+export async function setAmbientEnabled(on: boolean): Promise<void> {
+  // Tat truoc moi thu — chan unlock/tryPlay dang treo.
+  if (!on) {
+    prefs = { ...prefs, enabled: false };
+    persist();
+    stopHard();
+    error = "";
+    notify();
+    return;
+  }
+
+  prefs = { ...prefs, enabled: true };
+  persist();
+
+  if (!catalogReady) {
+    await loadRemoteCatalog();
+  }
+  if (!prefs.enabled) return;
+  await tryPlay();
+}
+
+export function setAmbientVolume(volume: number): void {
+  prefs = { ...prefs, volume: clampVolume(volume) };
+  persist();
+  if (audio) audio.volume = prefs.volume;
+  notify();
+}
+
+export async function setAmbientTrack(trackId: string): Promise<void> {
+  const track = findAmbientTrack(trackId);
+  if (!track) return;
+
+  prefs = { ...prefs, trackId: track.id };
+  persist();
+
+  if (!prefs.enabled) {
+    notify();
+    return;
+  }
+
+  await tryPlay();
+}

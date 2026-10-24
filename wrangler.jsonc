@@ -20,6 +20,13 @@
 			"database_id": "438b05f8-ce0c-4ab8-885e-74b365e22719"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			"bucket_name": "binhyen-media",
+			"preview_bucket_name": "binhyen-media-preview"
+		}
+	],
 	"ratelimits": [
 		{
 			"name": "INTERACTION_LIMITER",

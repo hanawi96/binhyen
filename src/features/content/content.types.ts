@@ -1,7 +1,20 @@
 
 /**
- * Loai noi dung.
- * Dung cho viec hien thi, quan ly va goi y.
+ * Dinh dang hien thi tren the (khac voi kind / chu de).
+ * Hien chi viet 'text'; image / video / poll mo dan.
+ */
+export const contentFormats = [
+  "text",
+  "image",
+  "video",
+  "poll"
+] as const;
+
+export type ContentFormat = (typeof contentFormats)[number];
+
+/**
+ * Loai noi dung (du lieu cu / goi y).
+ * Form bien tap khong chon tay; bai moi gan 'story'.
  */
 export const contentKinds = [
   "quote",
@@ -59,6 +72,10 @@ export const contentThemes = [
 
 export type ContentTheme = (typeof contentThemes)[number];
 
+export function isContentFormat(value: string): value is ContentFormat {
+  return (contentFormats as readonly string[]).includes(value);
+}
+
 export function isContentKind(value: string): value is ContentKind {
   return (contentKinds as readonly string[]).includes(value);
 }
@@ -97,12 +114,34 @@ export interface ContentSource {
 }
 
 /**
+ * Anh kem the (format image). Embed trong feed — khong fetch them.
+ */
+export interface ContentImage {
+  url: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+}
+
+/**
+ * Video kem the (format video). Embed meta trong feed; file chi tai khi phat.
+ */
+export interface ContentVideo {
+  url: string;
+  alt: string;
+  poster: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+/**
  * Cau truc thong nhat cho moi noi dung.
  */
 export interface ContentItem {
   id: string;
   slug: string;
 
+  format: ContentFormat;
   kind: ContentKind;
   status: ContentStatus;
 
@@ -116,6 +155,19 @@ export interface ContentItem {
   topics: ContentTopic[];
   suitableMoods: ContentMood[];
 
+  /**
+   * Nhan chu de dau (tu bang topics.label) — dung hien tren the.
+   * Thieu thi UI co the suy tu topics[0].
+   */
+  topicLabel?: string;
+
+  /** Co body dai trong content_details — bat nut Doc them. */
+  hasArticle?: boolean;
+
   article?: ContentArticle;
   source?: ContentSource;
+  /** Co khi format = image va da gan media. */
+  image?: ContentImage;
+  /** Co khi format = video va da gan media. */
+  video?: ContentVideo;
 }

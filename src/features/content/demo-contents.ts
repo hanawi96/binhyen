@@ -9,6 +9,7 @@ export const demoContents = [
   {
     id: "1",
     slug: "ban-khong-can-ruc-ro-moi-ngay",
+    format: "text",
     kind: "quote",
     status: "published",
     category: "Chữa lành & bình yên",
@@ -24,6 +25,7 @@ export const demoContents = [
   {
     id: "2",
     slug: "anh-sang-mat-troi-den-trai-dat",
+    format: "text",
     kind: "fact",
     status: "published",
     category: "Kiến thức kỳ thú",
@@ -39,6 +41,7 @@ export const demoContents = [
   {
     id: "3",
     slug: "khong-phai-ngay-nao-cung-can-thanh-tuu",
+    format: "text",
     kind: "insight",
     status: "published",
     category: "Góc nhìn cuộc sống",
@@ -54,6 +57,7 @@ export const demoContents = [
   {
     id: "4",
     slug: "bach-tuoc-co-ba-trai-tim",
+    format: "text",
     kind: "fact",
     status: "published",
     category: "Thiên nhiên kỳ thú",
@@ -69,6 +73,7 @@ export const demoContents = [
   {
     id: "5",
     slug: "hoc-cach-nhan-dien-cam-xuc",
+    format: "text",
     kind: "psychology",
     status: "published",
     category: "Tâm lý học dễ hiểu",
@@ -93,6 +98,7 @@ export const demoContents = [
   {
     id: "6",
     slug: "mot-loi-cam-on-nho",
+    format: "text",
     kind: "cute",
     status: "published",
     category: "Những điều dễ thương",

@@ -18,10 +18,17 @@ describe("parsePostDraft", () => {
         body: "Trời trong.",
         topics: ["nature", "peace"],
         moods: [],
+        format: "text",
         kind: "story",
         tag: "",
         sourceLabel: "",
         sourceUrl: "",
+        imageUrl: "",
+        imageAlt: "",
+        imageWidth: null,
+        imageHeight: null,
+        posterUrl: "",
+        pollOptions: [],
         theme: "nature",
         category: "Thiên nhiên kỳ thú"
       }
@@ -45,9 +52,6 @@ describe("parsePostDraft", () => {
       parsePostDraft({ title: "A", body: "x".repeat(8001), topics: ["peace"] })
         .ok
     ).toBe(false);
-    expect(
-      parsePostDraft({ title: "A", description: 5, topics: ["peace"] }).ok
-    ).toBe(false);
     expect(parsePostDraft(null).ok).toBe(false);
   });
 
@@ -56,10 +60,12 @@ describe("parsePostDraft", () => {
       title: "A",
       topics: ["cute"],
       kind: "quote",
+      description: "Bỏ qua",
       sourceUrl: "https://x.test"
     });
 
     expect(result.ok && result.value.kind).toBe("story");
+    expect(result.ok && result.value.description).toBe("");
     expect(result.ok && result.value.sourceUrl).toBe("");
   });
 });

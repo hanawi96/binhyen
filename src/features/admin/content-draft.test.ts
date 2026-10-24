@@ -10,11 +10,6 @@ import {
 
 const draft = {
   title: "Một câu dịu dàng",
-  description: "Dành cho buổi tối.",
-  category: "Chữa lành & bình yên",
-  tag: "Nhẹ nhàng",
-  kind: "quote",
-  theme: "peace",
   topics: ["peace"],
   moods: ["calm", "tired"],
   sourceLabel: "Sổ tay",
@@ -23,15 +18,155 @@ const draft = {
 };
 
 describe("Content draft", () => {
-  it("keeps a complete draft", () => {
+  it("builds display fields from the first topic", () => {
     const result = parseContentDraft(draft);
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        title: "Một câu dịu dàng",
+        description: "",
+        category: "Chữa lành & bình yên",
+        tag: "",
+        format: "text",
+        kind: "story",
+        theme: "peace",
+        topics: ["peace"],
+        moods: ["calm", "tired"],
+        sourceLabel: "Sổ tay",
+        sourceUrl: "https://example.com/note",
+        body: "Nội dung dài hơn.",
+        imageUrl: "",
+        imageAlt: "",
+        imageWidth: null,
+        imageHeight: null,
+        posterUrl: "",
+        pollOptions: []
+      }
+    });
+  });
 
-    if (result.ok) {
-      expect(result.value.title).toBe(draft.title);
-      expect(result.value.topics).toEqual(["peace"]);
-    }
+  it("accepts an image draft with an HTTPS URL", () => {
+    const result = parseContentDraft({
+      title: "Ánh sáng sớm",
+      format: "image",
+      topics: ["nature"],
+      moods: ["calm"],
+      imageUrl: "https://images.example.com/dawn.jpg",
+      imageAlt: "Bình minh",
+      imageWidth: "720",
+      imageHeight: 900
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      format: "image",
+      body: "",
+      imageUrl: "https://images.example.com/dawn.jpg",
+      imageAlt: "Bình minh",
+      imageWidth: 720,
+      imageHeight: 900
+    });
+    expect(
+      parseContentDraft({
+        title: "Thiếu ảnh",
+        format: "image",
+        topics: ["nature"],
+        moods: []
+      }).ok
+    ).toBe(false);
+    expect(
+      parseContentDraft({
+        title: "HTTP",
+        format: "image",
+        topics: ["nature"],
+        moods: [],
+        imageUrl: "http://insecure.example/a.jpg"
+      }).ok
+    ).toBe(false);
+    expect(
+      parseContentDraft({
+        title: "R2 local",
+        format: "image",
+        topics: ["nature"],
+        moods: [],
+        imageUrl:
+          "/api/media/image/2026/10/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg"
+      }).ok
+    ).toBe(true);
+  });
+
+  it("accepts a video draft with HTTPS media and optional poster", () => {
+    const result = parseContentDraft({
+      title: "Gió qua lá",
+      format: "video",
+      topics: ["nature"],
+      moods: ["calm"],
+      imageUrl: "https://cdn.example.com/breeze.mp4",
+      imageAlt: "Lá rung nhẹ",
+      posterUrl: "https://cdn.example.com/breeze.jpg",
+      imageWidth: 1280,
+      imageHeight: 720
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      format: "video",
+      body: "",
+      imageUrl: "https://cdn.example.com/breeze.mp4",
+      posterUrl: "https://cdn.example.com/breeze.jpg",
+      imageWidth: 1280,
+      imageHeight: 720
+    });
+    expect(
+      parseContentDraft({
+        title: "Thiếu video",
+        format: "video",
+        topics: ["nature"],
+        moods: []
+      }).ok
+    ).toBe(false);
+  });
+
+  it("accepts a poll draft with 2 to 4 options", () => {
+    const result = parseContentDraft({
+      title: "Hôm nay bạn thế nào?",
+      format: "poll",
+      topics: ["peace"],
+      moods: ["calm"],
+      pollOptions: ["Êm", "Hơi mệt", "Vui"]
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      format: "poll",
+      body: "",
+      pollOptions: ["Êm", "Hơi mệt", "Vui"]
+    });
+    expect(
+      parseContentDraft({
+        title: "Hỏi",
+        format: "poll",
+        topics: ["peace"],
+        moods: [],
+        pollOptions: ["Một"]
+      }).ok
+    ).toBe(false);
+  });
+
+  it("ignores client kind, theme, category, and description", () => {
+    const result = parseContentDraft({
+      ...draft,
+      topics: ["nature"],
+      kind: "quote",
+      theme: "cute",
+      category: "Khác",
+      description: "Không dùng"
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      kind: "story",
+      theme: "nature",
+      category: "Thiên nhiên kỳ thú",
+      description: ""
+    });
   });
 
   it("rejects an empty title, a bad link, and an unknown topic", () => {
@@ -45,6 +180,7 @@ describe("Content draft", () => {
     expect(parseContentDraft({ ...draft, topics: ["nope"] }).ok).toBe(
       false
     );
+    expect(parseContentDraft({ ...draft, topics: [] }).ok).toBe(false);
   });
 
   it("reads the next page without trusting a broken cursor", () => {

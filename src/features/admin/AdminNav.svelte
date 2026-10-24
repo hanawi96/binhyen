@@ -2,7 +2,7 @@
   import ThemeToggle from "../theme/ThemeToggle.svelte";
 
   interface Props {
-    current: "contents" | "submissions" | "catalog";
+    current: "contents" | "submissions" | "catalog" | "ambient";
     onleave: () => void;
     pending?: number;
   }
@@ -39,6 +39,12 @@
       aria-current={current === "catalog" ? "page" : undefined}
     >
       Chủ đề &amp; tâm trạng
+    </a>
+    <a
+      href="/admin/ambient"
+      aria-current={current === "ambient" ? "page" : undefined}
+    >
+      Nhạc nền
     </a>
   </nav>
   <div class="side-links">

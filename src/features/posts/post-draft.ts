@@ -1,27 +1,12 @@
 import type { ContentDraftInput } from "../admin/content-draft";
-import {
-  isContentTopic,
-  type ContentTheme,
-  type ContentTopic
-} from "../content/content.types";
+import { isContentTopic, type ContentTopic } from "../content/content.types";
+import { lookFromTopic } from "../content/topic-look";
 
 export const MAX_POST_TOPICS = 3;
 /** Ban nhap chua dang toi da cua mot nguoi, chan spam. */
 export const MAX_OPEN_DRAFTS = 30;
 
-const LIMITS = { title: 280, description: 400, body: 8000 } as const;
-
-/** Nhom hien thi va mau the lay theo chu de dau tien. */
-const LOOK: Record<ContentTopic, { theme: ContentTheme; category: string }> = {
-  peace: { theme: "peace", category: "Chữa lành & bình yên" },
-  stories: { theme: "story", category: "Góc nhìn cuộc sống" },
-  science: { theme: "discovery", category: "Kiến thức kỳ thú" },
-  nature: { theme: "nature", category: "Thiên nhiên kỳ thú" },
-  psychology: { theme: "psychology", category: "Tâm lý học dễ hiểu" },
-  perspective: { theme: "story", category: "Góc nhìn cuộc sống" },
-  cute: { theme: "cute", category: "Những điều dễ thương" },
-  tips: { theme: "discovery", category: "Kiến thức kỳ thú" }
-};
+const LIMITS = { title: 280, body: 8000 } as const;
 
 function text(value: unknown, limit: number): string | null {
   if (value === undefined) return "";
@@ -54,11 +39,10 @@ export function parsePostDraft(
 
   const source = input as Record<string, unknown>;
   const title = text(source.title, LIMITS.title);
-  const description = text(source.description, LIMITS.description);
   const body = text(source.body, LIMITS.body);
   const topics = topicsOf(source.topics);
 
-  if (title === null || description === null || body === null) {
+  if (title === null || body === null) {
     return { ok: false, error: "Bài quá dài." };
   }
 
@@ -75,15 +59,22 @@ export function parsePostDraft(
     ok: true,
     value: {
       title,
-      description,
+      description: "",
       body,
       topics,
       moods: [],
+      format: "text",
       kind: "story",
       tag: "",
       sourceLabel: "",
       sourceUrl: "",
-      ...LOOK[topics[0]]
+      imageUrl: "",
+      imageAlt: "",
+      imageWidth: null,
+      imageHeight: null,
+      posterUrl: "",
+      pollOptions: [],
+      ...lookFromTopic(topics[0])
     }
   };
 }

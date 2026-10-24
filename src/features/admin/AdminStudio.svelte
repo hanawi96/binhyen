@@ -22,6 +22,15 @@
     type ContentTheme,
     type ContentTopic
   } from "../content/content.types";
+  import { readContentFormat } from "../content/content-format";
+  import {
+    layoutLabel,
+    mediaLayout,
+    readFileMediaSize,
+    readUrlMediaSize,
+    type MediaSize
+  } from "../media/media-dimensions";
+  import { lookFromTopic } from "../content/topic-look";
 
   const PAGE_SIZE = 12;
 
@@ -33,15 +42,6 @@
     insight: "Góc nhìn",
     cute: "Điều dễ thương",
     tip: "Mẹo hữu ích"
-  };
-
-  const themeLabels: Record<ContentTheme, string> = {
-    peace: "Bình yên",
-    discovery: "Khám phá",
-    story: "Câu chuyện",
-    nature: "Thiên nhiên",
-    psychology: "Tâm lý",
-    cute: "Dễ thương"
   };
 
   const statusLabels: Record<ContentStatus, string> = {
@@ -69,26 +69,7 @@
   };
 
   const reasonLabels: Record<ReviewReason, string> = {
-    description: "Thiếu mô tả",
     topic: "Thiếu chủ đề"
-  };
-
-  const categories: Array<{ label: string; theme: ContentTheme }> = [
-    { label: "Chữa lành & bình yên", theme: "peace" },
-    { label: "Kiến thức kỳ thú", theme: "discovery" },
-    { label: "Góc nhìn cuộc sống", theme: "story" },
-    { label: "Thiên nhiên kỳ thú", theme: "nature" },
-    { label: "Tâm lý học dễ hiểu", theme: "psychology" },
-    { label: "Những điều dễ thương", theme: "cute" }
-  ];
-
-  const categoryTheme: Record<string, ContentTheme> = {
-    "Chữa lành & bình yên": "peace",
-    "Kiến thức kỳ thú": "discovery",
-    "Góc nhìn cuộc sống": "story",
-    "Thiên nhiên kỳ thú": "nature",
-    "Tâm lý học dễ hiểu": "psychology",
-    "Những điều dễ thương": "cute"
   };
 
   const tabs: Array<{ id: "all" | ContentStatus; label: string }> = [
@@ -100,31 +81,35 @@
 
   interface DraftForm {
     title: string;
-    description: string;
-    category: string;
-    tag: string;
-    kind: ContentKind;
-    theme: ContentTheme;
+    format: "text" | "image" | "video" | "poll";
     topics: ContentTopic[];
     moods: ContentMood[];
     sourceLabel: string;
     sourceUrl: string;
     body: string;
+    imageUrl: string;
+    imageAlt: string;
+    imageWidth: string;
+    imageHeight: string;
+    posterUrl: string;
+    pollOptions: string[];
   }
 
   function emptyForm(): DraftForm {
     return {
       title: "",
-      description: "",
-      category: categories[0].label,
-      tag: "",
-      kind: "quote",
-      theme: "peace",
+      format: "text",
       topics: [],
       moods: [],
       sourceLabel: "",
       sourceUrl: "",
-      body: ""
+      body: "",
+      imageUrl: "",
+      imageAlt: "",
+      imageWidth: "",
+      imageHeight: "",
+      posterUrl: "",
+      pollOptions: ["", ""]
     };
   }
 
@@ -172,7 +157,11 @@
   let listError = $state("");
   let detailLoading = $state(false);
   let saving = $state(false);
+  let mediaUploading = $state(false);
+  let mediaMeasuring = $state(false);
   let confirmArchive = $state(false);
+  let sizeProbeTicket = 0;
+  let sizeProbeTimer: ReturnType<typeof setTimeout> | undefined;
   let content = $state<AdminContent | null>(null);
   let form = $state(emptyForm());
   let savedForm = $state(formSnapshot(emptyForm()));
@@ -197,8 +186,13 @@
         (contentMoods as readonly string[]).includes(item.slug)
     )
   );
-  let previewTheme = $derived(categoryTheme[form.category] ?? form.theme);
-  let knownCategory = $derived(form.category in categoryTheme);
+  let previewLook = $derived(
+    form.topics[0] ? lookFromTopic(form.topics[0]) : null
+  );
+  let previewTheme = $derived(previewLook?.theme ?? "peace");
+  let previewCategory = $derived(
+    previewLook?.category ?? "Chọn chủ đề để xem nhóm"
+  );
   let archived = $derived(content?.status === "archived");
   let dirty = $derived(formSnapshot(form) !== savedForm);
   let safeUrl = $derived.by(() => {
@@ -236,7 +230,7 @@
   }
 
   function isReason(value: unknown): value is ReviewReason {
-    return value === "description" || value === "topic";
+    return value === "topic";
   }
 
   function readListItem(value: unknown): AdminListItem | null {
@@ -317,8 +311,20 @@
       return null;
     }
 
+    const pollOptions = Array.isArray(row.pollOptions)
+      ? row.pollOptions.filter(
+          (item): item is string => typeof item === "string"
+        )
+      : [];
+
+    const imageWidth =
+      typeof row.imageWidth === "number" ? row.imageWidth : null;
+    const imageHeight =
+      typeof row.imageHeight === "number" ? row.imageHeight : null;
+
     return {
       ...item,
+      format: readContentFormat(row.format),
       slug: row.slug,
       tag: row.tag,
       moods: row.moods.filter(
@@ -329,6 +335,12 @@
       sourceLabel: row.sourceLabel,
       sourceUrl: row.sourceUrl,
       body: row.body,
+      imageUrl: typeof row.imageUrl === "string" ? row.imageUrl : "",
+      imageAlt: typeof row.imageAlt === "string" ? row.imageAlt : "",
+      imageWidth,
+      imageHeight,
+      posterUrl: typeof row.posterUrl === "string" ? row.posterUrl : "",
+      pollOptions,
       publishedAt: row.publishedAt
     };
   }
@@ -421,6 +433,140 @@
     return { response, body };
   }
 
+  function applyMeasuredSize(size: MediaSize | null) {
+    if (!size) return;
+    form.imageWidth = String(size.width);
+    form.imageHeight = String(size.height);
+  }
+
+  function clearMeasuredSize() {
+    form.imageWidth = "";
+    form.imageHeight = "";
+  }
+
+  let measuredHint = $derived.by(() => {
+    const width = Number(form.imageWidth);
+    const height = Number(form.imageHeight);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return "";
+    const layout = mediaLayout(width, height);
+    const label = layoutLabel(layout);
+    return label
+      ? `Đã đo ${width}×${height}px (${label}) — thẻ sẽ giữ đúng tỉ lệ.`
+      : `Đã đo ${width}×${height}px — thẻ sẽ giữ đúng tỉ lệ.`;
+  });
+
+  async function uploadMediaFile(
+    file: File,
+    kind: "image" | "video",
+    target: "main" | "poster"
+  ) {
+    if (mediaUploading || detailLoading || archived || saving) return;
+
+    mediaUploading = true;
+    notice = null;
+
+    const measureMain =
+      target === "main" ? readFileMediaSize(file) : Promise.resolve(null);
+
+    try {
+      const payload = new FormData();
+      payload.append("file", file);
+      payload.append("kind", kind);
+
+      const [response, measured] = await Promise.all([
+        fetch("/api/admin/media", {
+          method: "POST",
+          body: payload
+        }),
+        measureMain
+      ]);
+      const body: unknown = await response.json().catch(() => null);
+
+      if (response.status === 401) {
+        loseAccess();
+        return;
+      }
+
+      const row = record(body);
+      if (
+        !response.ok ||
+        row?.success !== true ||
+        typeof row.url !== "string"
+      ) {
+        notice = {
+          tone: "error",
+          text: errorText(body, "Không tải được tệp lên kho media.")
+        };
+        return;
+      }
+
+      if (target === "poster") {
+        form.posterUrl = row.url;
+      } else {
+        form.imageUrl = row.url;
+        sizeProbeTicket += 1;
+        if (measured) applyMeasuredSize(measured);
+        else clearMeasuredSize();
+      }
+
+      notice = {
+        tone: "ok",
+        text:
+          target === "main" && measured
+            ? `Đã lưu kho media · ${measured.width}×${measured.height}px.`
+            : "Đã lưu vào kho media."
+      };
+    } catch {
+      notice = {
+        tone: "error",
+        text: "Không có kết nối khi tải tệp."
+      };
+    } finally {
+      mediaUploading = false;
+    }
+  }
+
+  function onMediaPicked(
+    event: Event,
+    kind: "image" | "video",
+    target: "main" | "poster"
+  ) {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement) || !input.files?.[0]) return;
+    const file = input.files[0];
+    input.value = "";
+    void uploadMediaFile(file, kind, target);
+  }
+
+  /** Khi dan URL (khong upload): thu do metadata neu trinh duyet cho phep. */
+  function scheduleProbeMediaUrl(url: string, kind: "image" | "video") {
+    clearTimeout(sizeProbeTimer);
+    const trimmed = url.trim();
+    if (!trimmed) {
+      sizeProbeTicket += 1;
+      clearMeasuredSize();
+      mediaMeasuring = false;
+      return;
+    }
+
+    mediaMeasuring = true;
+    sizeProbeTimer = setTimeout(() => {
+      void probeMediaUrlSize(trimmed, kind);
+    }, 280);
+  }
+
+  async function probeMediaUrlSize(url: string, kind: "image" | "video") {
+    const ticket = ++sizeProbeTicket;
+    try {
+      const size = await readUrlMediaSize(url, kind);
+      if (ticket !== sizeProbeTicket) return;
+      if (size) applyMeasuredSize(size);
+      else clearMeasuredSize();
+    } finally {
+      if (ticket === sizeProbeTicket) mediaMeasuring = false;
+    }
+  }
+
   function resetPages() {
     pageCursors = [null];
     pageIndex = 0;
@@ -501,18 +647,33 @@
   }
 
   function toForm(next: AdminContent): DraftForm {
+    const pollOptions =
+      next.pollOptions.length >= 2
+        ? [...next.pollOptions]
+        : ["", ""];
+    const format =
+      next.format === "poll" ||
+      next.format === "image" ||
+      next.format === "video"
+        ? next.format
+        : "text";
+
     return {
       title: next.title,
-      description: next.description,
-      category: next.category,
-      tag: next.tag,
-      kind: next.kind,
-      theme: next.theme,
+      format,
       topics: next.topics,
       moods: next.moods,
       sourceLabel: next.sourceLabel,
       sourceUrl: next.sourceUrl,
-      body: next.body
+      body: next.body,
+      imageUrl: next.imageUrl,
+      imageAlt: next.imageAlt,
+      imageWidth:
+        next.imageWidth === null ? "" : String(next.imageWidth),
+      imageHeight:
+        next.imageHeight === null ? "" : String(next.imageHeight),
+      posterUrl: next.posterUrl,
+      pollOptions
     };
   }
 
@@ -715,12 +876,47 @@
   async function save(publish: boolean) {
     if (saving || detailLoading || archived) return;
 
-    if (!form.title.trim() || !form.category.trim()) {
+    if (!form.title.trim() || form.topics.length === 0) {
       notice = {
         tone: "error",
-        text: "Hãy nhập câu chữ chính và nhóm hiển thị."
+        text:
+          form.format === "poll"
+            ? "Hãy nhập câu hỏi và chọn ít nhất một chủ đề."
+            : form.format === "image"
+              ? "Hãy nhập chú thích và chọn ít nhất một chủ đề."
+              : form.format === "video"
+                ? "Hãy nhập chú thích video và chọn ít nhất một chủ đề."
+                : "Hãy nhập câu chữ chính và chọn ít nhất một chủ đề."
       };
       return;
+    }
+
+    if (
+      (form.format === "image" || form.format === "video") &&
+      !form.imageUrl.trim()
+    ) {
+      notice = {
+        tone: "error",
+        text:
+          form.format === "video"
+            ? "Hãy dán URL video hoặc tải tệp lên."
+            : "Hãy dán URL ảnh hoặc tải tệp lên."
+      };
+      return;
+    }
+
+    if (form.format === "poll") {
+      const filled = form.pollOptions
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      if (filled.length < 2 || filled.length > 4) {
+        notice = {
+          tone: "error",
+          text: "Khảo sát cần 2 đến 4 đáp án."
+        };
+        return;
+      }
     }
 
     if (form.sourceUrl.trim() && !safeUrl) {
@@ -743,7 +939,15 @@
           : "/api/admin/contents",
         {
           method: editing ? "PATCH" : "POST",
-          body: JSON.stringify(form)
+          body: JSON.stringify({
+            ...form,
+            imageWidth: form.imageWidth.trim() || null,
+            imageHeight: form.imageHeight.trim() || null,
+            pollOptions:
+              form.format === "poll"
+                ? form.pollOptions.map((item) => item.trim()).filter(Boolean)
+                : []
+          })
         }
       );
 
@@ -862,14 +1066,6 @@
     await loadList();
   }
 
-  function chooseCategory(event: Event) {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLSelectElement)) return;
-    form.category = target.value;
-    const preset = categories.find((item) => item.label === target.value);
-    if (preset) form.theme = preset.theme;
-  }
-
   function toggleTopic(slug: ContentTopic) {
     form.topics = form.topics.includes(slug)
       ? form.topics.filter((item) => item !== slug)
@@ -882,16 +1078,27 @@
       : [...form.moods, slug];
   }
 
-  function setKind(event: Event) {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLSelectElement)) return;
-    if (isContentKind(target.value)) form.kind = target.value;
+  function setFormat(next: "text" | "image" | "video" | "poll") {
+    form.format = next;
+    if (next === "poll" && form.pollOptions.length < 2) {
+      form.pollOptions = ["", ""];
+    }
   }
 
-  function setTheme(event: Event) {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLSelectElement)) return;
-    if (isContentTheme(target.value)) form.theme = target.value;
+  function setPollOption(index: number, value: string) {
+    form.pollOptions = form.pollOptions.map((item, at) =>
+      at === index ? value : item
+    );
+  }
+
+  function addPollOption() {
+    if (form.pollOptions.length >= 4) return;
+    form.pollOptions = [...form.pollOptions, ""];
+  }
+
+  function removePollOption(index: number) {
+    if (form.pollOptions.length <= 2) return;
+    form.pollOptions = form.pollOptions.filter((_, at) => at !== index);
   }
 
   function topicLabel(slug: string): string {
@@ -929,6 +1136,7 @@
 
   onDestroy(() => {
     clearTimeout(searchTimer);
+    clearTimeout(sizeProbeTimer);
     if (typeof window === "undefined") return;
     window.removeEventListener("beforeunload", onBeforeUnload);
   });
@@ -1177,8 +1385,49 @@
             {#if detailLoading}
               <p>Đang mở bài…</p>
             {/if}
+            <p class="field-label" id="format-label">Định dạng</p>
+            <div class="chips" role="group" aria-labelledby="format-label">
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "text"}
+                onclick={() => setFormat("text")}
+              >
+                Chữ
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "image"}
+                onclick={() => setFormat("image")}
+              >
+                Ảnh
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "video"}
+                onclick={() => setFormat("video")}
+              >
+                Video
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "poll"}
+                onclick={() => setFormat("poll")}
+              >
+                Khảo sát
+              </button>
+            </div>
             <label>
-              Câu chữ chính
+              {form.format === "poll"
+                ? "Câu hỏi"
+                : form.format === "image"
+                  ? "Chú thích ảnh"
+                  : form.format === "video"
+                    ? "Chú thích video"
+                    : "Câu chữ chính"}
               <textarea
                 rows="3"
                 maxlength="280"
@@ -1186,35 +1435,122 @@
                 required
               ></textarea>
             </label>
-            <label>
-              Mô tả ngắn
-              <textarea
-                rows="2"
-                maxlength="400"
-                bind:value={form.description}
-              ></textarea>
-            </label>
-            <div class="split">
+            {#if form.format === "image" || form.format === "video"}
               <label>
-                Loại nội dung
-                <select value={form.kind} onchange={setKind}>
-                  {#each contentKinds as kind (kind)}
-                    <option value={kind}>{kindLabels[kind]}</option>
-                  {/each}
-                </select>
+                {form.format === "video"
+                  ? "URL / đường dẫn video"
+                  : "URL / đường dẫn ảnh"}
+                <input
+                  maxlength="500"
+                  placeholder="https://… hoặc /api/media/…"
+                  value={form.imageUrl}
+                  oninput={(event) => {
+                    const target = event.currentTarget;
+                    if (!(target instanceof HTMLInputElement)) return;
+                    form.imageUrl = target.value;
+                    scheduleProbeMediaUrl(
+                      target.value,
+                      form.format === "video" ? "video" : "image"
+                    );
+                  }}
+                />
+              </label>
+              <label class="file-pick">
+                {form.format === "video" ? "Hoặc tải video lên" : "Hoặc tải ảnh lên"}
+                <input
+                  type="file"
+                  accept={form.format === "video"
+                    ? "video/mp4,video/webm"
+                    : "image/jpeg,image/png,image/webp"}
+                  disabled={mediaUploading || detailLoading || archived || saving}
+                  onchange={(event) =>
+                    onMediaPicked(
+                      event,
+                      form.format === "video" ? "video" : "image",
+                      "main"
+                    )}
+                />
               </label>
               <label>
-                Nhóm hiển thị
-                <select value={form.category} onchange={chooseCategory}>
-                  {#if !knownCategory}
-                    <option value={form.category}>{form.category}</option>
-                  {/if}
-                  {#each categories as category (category.label)}
-                    <option value={category.label}>{category.label}</option>
-                  {/each}
-                </select>
+                {form.format === "video" ? "Mô tả video" : "Mô tả ảnh (alt)"}
+                <input maxlength="200" bind:value={form.imageAlt} />
               </label>
-            </div>
+              {#if form.format === "video"}
+                <label>
+                  Ảnh xem trước (tuỳ chọn)
+                  <input
+                    maxlength="500"
+                    placeholder="https://… hoặc /api/media/…"
+                    bind:value={form.posterUrl}
+                  />
+                </label>
+                <label class="file-pick">
+                  Hoặc tải ảnh xem trước
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={mediaUploading || detailLoading || archived || saving}
+                    onchange={(event) =>
+                      onMediaPicked(event, "image", "poster")}
+                  />
+                </label>
+              {/if}
+              {#if measuredHint}
+                <p class="hint">{measuredHint}</p>
+              {:else if mediaMeasuring}
+                <p class="hint">Đang đo tỉ lệ media…</p>
+              {:else}
+                <p class="hint">
+                  Tỉ lệ khung được đo tự động khi tải tệp hoặc dán URL (nếu trình
+                  duyệt đọc được metadata).
+                </p>
+              {/if}
+              <p class="hint">
+                {mediaUploading
+                  ? "Đang tải lên kho media…"
+                  : form.format === "video"
+                    ? "Video chỉ tải khi bấm phát. Có thể dán URL HTTPS hoặc tải lên R2 (tối đa 16 MB)."
+                    : "Có thể dán URL HTTPS hoặc tải lên R2 (JPEG/PNG/WebP, tối đa 2 MB)."}
+              </p>
+            {/if}
+            {#if form.format === "poll"}
+              <p class="field-label">Đáp án (2–4)</p>
+              <div class="poll-edit">
+                {#each form.pollOptions as option, index (index)}
+                  <div class="poll-edit-row">
+                    <input
+                      maxlength="120"
+                      placeholder={`Đáp án ${index + 1}`}
+                      value={option}
+                      oninput={(event) => {
+                        const target = event.currentTarget;
+                        if (target instanceof HTMLInputElement) {
+                          setPollOption(index, target.value);
+                        }
+                      }}
+                    />
+                    {#if form.pollOptions.length > 2}
+                      <button
+                        type="button"
+                        class="chip"
+                        onclick={() => removePollOption(index)}
+                      >
+                        Xóa
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
+                {#if form.pollOptions.length < 4}
+                  <button
+                    type="button"
+                    class="chip"
+                    onclick={addPollOption}
+                  >
+                    Thêm đáp án
+                  </button>
+                {/if}
+              </div>
+            {/if}
             <p class="field-label" id="topic-label">Chủ đề</p>
             <div class="chips" role="group" aria-labelledby="topic-label">
               {#each topicChoices as topic (topic.slug)}
@@ -1228,6 +1564,7 @@
                 </button>
               {/each}
             </div>
+            <p class="hint">Chủ đề đầu tiên quyết định màu và nhóm trên thẻ.</p>
             <p class="field-label" id="mood-label">Tâm trạng phù hợp</p>
             <div class="chips" role="group" aria-labelledby="mood-label">
               {#each moodChoices as mood (mood.slug)}
@@ -1241,29 +1578,16 @@
                 </button>
               {/each}
             </div>
-            <div class="split">
+            {#if form.format === "text"}
               <label>
-                Nhãn hiển thị
-                <input maxlength="48" bind:value={form.tag} />
+                Nội dung dài, Markdown
+                <textarea
+                  rows="6"
+                  maxlength="8000"
+                  bind:value={form.body}
+                ></textarea>
               </label>
-              <label>
-                Theme giao diện
-                <select value={form.theme} onchange={setTheme}>
-                  {#each Object.entries(themeLabels) as [value, label] (value)}
-                    <option {value}>{label}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-            <p class="hint">Màu thẻ trên feed theo nhóm hiển thị.</p>
-            <label>
-              Nội dung dài, Markdown
-              <textarea
-                rows="6"
-                maxlength="8000"
-                bind:value={form.body}
-              ></textarea>
-            </label>
+            {/if}
             <div class="split">
               <label>
                 Nguồn
@@ -1279,9 +1603,9 @@
                 />
               </label>
             </div>
-            {#if !form.description.trim() || form.topics.length === 0}
+            {#if form.topics.length === 0}
               <p class="hint">
-                Bài thiếu mô tả hoặc chủ đề sẽ nằm trong mục cần rà soát.
+                Bài thiếu chủ đề sẽ nằm trong mục cần rà soát.
                 Bài trùng câu chữ sẽ bị chặn khi lưu, không bị xóa.
               </p>
             {/if}
@@ -1291,17 +1615,24 @@
             <p class="field-label">Xem trước</p>
             <article class="preview-card" data-theme={previewTheme}>
               <header>
-                <span>{form.category || "Nhóm hiển thị"}</span>
+                <span>{previewCategory}</span>
                 <span aria-hidden="true">✦</span>
               </header>
               <div>
                 <span class="mark" aria-hidden="true">“</span>
-                <h3>{form.title.trim() || "Câu chữ chính"}</h3>
-                <p>{form.description.trim() || "Mô tả ngắn"}</p>
+                <h3>
+                  {form.title.trim() ||
+                    (form.format === "image"
+                      ? "Chú thích ảnh"
+                      : form.format === "video"
+                        ? "Chú thích video"
+                        : "Câu chữ chính")}
+                </h3>
               </div>
-              <footer>
-                <span>{form.tag.trim() || "Nhãn"}</span>
-              </footer>
+              {#if (form.format === "image" || form.format === "video") &&
+                form.imageUrl.trim()}
+                <p class="hint">{form.imageUrl.trim()}</p>
+              {/if}
             </article>
             {#if form.body.trim()}
               <pre class="body-preview">{form.body}</pre>
@@ -1514,6 +1845,21 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+  }
+
+  .poll-edit {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .poll-edit-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .poll-edit-row input {
+    flex: 1;
   }
 
   .tabs button,
@@ -1805,6 +2151,13 @@
 
   .field-label {
     margin: 0;
+    font-size: var(--text-sm);
+  }
+
+  .file-pick input[type="file"] {
+    display: block;
+    width: 100%;
+    margin-top: var(--space-1);
     font-size: var(--text-sm);
   }
 

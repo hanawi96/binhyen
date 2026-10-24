@@ -1,20 +1,28 @@
 import {
+  parseHttpsMediaUrl,
+  parseImageAlt,
+  parseImageSize
+} from "../content/content-media";
+import {
   contentKinds,
   contentMoods,
-  contentThemes,
   contentTopics,
+  type ContentFormat,
   type ContentKind,
   type ContentMood,
   type ContentStatus,
   type ContentTheme,
   type ContentTopic
 } from "../content/content.types";
+import { lookFromTopic } from "../content/topic-look";
+import { parsePollOptions } from "../interactions/content-polls";
 
 export interface ContentDraftInput {
   title: string;
   description: string;
   category: string;
   tag: string;
+  format: ContentFormat;
   kind: ContentKind;
   theme: ContentTheme;
   topics: ContentTopic[];
@@ -22,6 +30,15 @@ export interface ContentDraftInput {
   sourceLabel: string;
   sourceUrl: string;
   body: string;
+  /** URL HTTPS khi format = image | video. */
+  imageUrl: string;
+  imageAlt: string;
+  imageWidth: number | null;
+  imageHeight: number | null;
+  /** Poster HTTPS tuy chon khi format = video. */
+  posterUrl: string;
+  /** Nhan dap an khi format = poll (2–4). */
+  pollOptions: string[];
 }
 
 export type AdminSort = "updated" | "created";
@@ -39,9 +56,6 @@ export interface AdminListQuery {
 
 const LIMITS = {
   title: 280,
-  description: 400,
-  category: 80,
-  tag: 48,
   sourceLabel: 80,
   sourceUrl: 300,
   body: 8000,
@@ -52,6 +66,7 @@ function text(
   value: unknown,
   limit: number
 ): string | null {
+  if (value === undefined) return "";
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (trimmed.length > limit) return null;
@@ -96,6 +111,10 @@ function httpUrl(value: string): boolean {
   }
 }
 
+/**
+ * Form bien tap gui title / topics / moods / body|image|poll / nguon / format.
+ * description, kind, theme, category, tag do server gan theo chu de dau.
+ */
 export function parseContentDraft(
   input: unknown
 ):
@@ -107,35 +126,39 @@ export function parseContentDraft(
 
   const source = input as Record<string, unknown>;
   const title = text(source.title, LIMITS.title);
-  const description = text(source.description, LIMITS.description);
-  const category = text(source.category, LIMITS.category);
-  const tag = text(source.tag, LIMITS.tag);
   const sourceLabel = text(source.sourceLabel, LIMITS.sourceLabel);
   const sourceUrl = text(source.sourceUrl, LIMITS.sourceUrl);
   const body = text(source.body, LIMITS.body);
-  const kind = oneOf(source.kind, contentKinds);
-  const theme = oneOf(source.theme, contentThemes);
   const topics = manyOf(source.topics, contentTopics);
   const moods = manyOf(source.moods, contentMoods);
+  let format: ContentFormat = "text";
+
+  if (source.format === "poll") format = "poll";
+  else if (source.format === "image") format = "image";
+  else if (source.format === "video") format = "video";
+  else if (source.format !== undefined && source.format !== "text") {
+    return { ok: false, error: "Định dạng không hợp lệ." };
+  }
 
   if (!title) {
-    return { ok: false, error: "Hãy nhập câu chữ chính." };
+    return {
+      ok: false,
+      error:
+        format === "poll"
+          ? "Hãy nhập câu hỏi."
+          : format === "image"
+            ? "Hãy nhập chú thích ảnh."
+            : format === "video"
+              ? "Hãy nhập chú thích video."
+              : "Hãy nhập câu chữ chính."
+    };
   }
 
-  if (!category) {
-    return { ok: false, error: "Hãy chọn nhóm hiển thị." };
+  if (!topics || topics.length === 0 || !topics[0]) {
+    return { ok: false, error: "Hãy chọn ít nhất một chủ đề." };
   }
 
-  if (
-    description === null ||
-    tag === null ||
-    sourceLabel === null ||
-    body === null ||
-    !kind ||
-    !theme ||
-    !topics ||
-    !moods
-  ) {
+  if (sourceLabel === null || body === null || !moods) {
     return { ok: false, error: "Một vài mục chưa hợp lệ." };
   }
 
@@ -143,20 +166,109 @@ export function parseContentDraft(
     return { ok: false, error: "Liên kết nguồn không hợp lệ." };
   }
 
+  let imageUrl = "";
+  let imageAlt = "";
+  let imageWidth: number | null = null;
+  let imageHeight: number | null = null;
+  let posterUrl = "";
+  let pollOptions: string[] = [];
+
+  if (format === "image" || format === "video") {
+    const url = parseHttpsMediaUrl(source.imageUrl);
+    if (!url) {
+      return {
+        ok: false,
+        error:
+          format === "video"
+            ? "Cần URL video HTTPS hoặc đường dẫn /api/media/… hợp lệ."
+            : "Cần URL ảnh HTTPS hoặc đường dẫn /api/media/… hợp lệ."
+      };
+    }
+
+    const alt = parseImageAlt(source.imageAlt);
+    if (alt === null) {
+      return {
+        ok: false,
+        error:
+          format === "video" ? "Mô tả video quá dài." : "Mô tả ảnh quá dài."
+      };
+    }
+
+    const width = parseImageSize(source.imageWidth);
+    if (
+      source.imageWidth !== undefined &&
+      source.imageWidth !== null &&
+      source.imageWidth !== "" &&
+      width === null
+    ) {
+      return { ok: false, error: "Chiều rộng media không hợp lệ." };
+    }
+
+    const height = parseImageSize(source.imageHeight);
+    if (
+      source.imageHeight !== undefined &&
+      source.imageHeight !== null &&
+      source.imageHeight !== "" &&
+      height === null
+    ) {
+      return { ok: false, error: "Chiều cao media không hợp lệ." };
+    }
+
+    imageUrl = url;
+    imageAlt = alt;
+    imageWidth = width;
+    imageHeight = height;
+
+    if (format === "video") {
+      const posterRaw = source.posterUrl;
+      if (
+        posterRaw !== undefined &&
+        posterRaw !== null &&
+        posterRaw !== ""
+      ) {
+        const poster = parseHttpsMediaUrl(posterRaw);
+        if (!poster) {
+          return {
+            ok: false,
+            error: "Ảnh xem trước phải là HTTPS hoặc /api/media/… hợp lệ."
+          };
+        }
+        posterUrl = poster;
+      }
+    }
+  }
+
+  if (format === "poll") {
+    const options = parsePollOptions(source.pollOptions);
+    if (!options) {
+      return {
+        ok: false,
+        error: "Khảo sát cần 2 đến 4 đáp án khác nhau."
+      };
+    }
+    pollOptions = options;
+  }
+
   return {
     ok: true,
     value: {
       title,
-      description,
-      category,
-      tag,
-      kind,
-      theme,
+      description: "",
+      tag: "",
+      format,
+      kind: "story",
       topics,
       moods,
       sourceLabel,
       sourceUrl,
-      body
+      body: format === "text" ? body : "",
+      imageUrl,
+      imageAlt,
+      imageWidth,
+      imageHeight,
+      posterUrl,
+      pollOptions,
+      ...lookFromTopic(topics[0])
     }
   };
 }
