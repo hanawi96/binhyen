@@ -113,3 +113,21 @@ export function writePosition(
 
   return trimPositions(next);
 }
+
+/**
+ * Gop vi tri khi dang nhap: tai khoan lam nen, an danh de len (thiet bi
+ * vua xem). Bo loc trung thi lay ban an danh; day thi bo muc cu nhat.
+ */
+export function mergePositions(
+  into: Positions,
+  from: Positions
+): Map<string, string> {
+  const next = new Map(into);
+
+  for (const [key, cursor] of from) {
+    next.delete(key);
+    next.set(key, cursor);
+  }
+
+  return trimPositions(next);
+}

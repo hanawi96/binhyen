@@ -5,7 +5,7 @@ import { login } from "../../../features/account/account";
 import {
   authLimited,
   cookieActor,
-  signedInResponse
+  signedInWithFeedMerge
 } from "../../../features/account/account-http";
 import { createD1AccountStore } from "../../../features/account/d1-account-store";
 import {
@@ -17,20 +17,21 @@ export const prerender = false;
 
 /**
  * POST /api/auth/login  { email, password }
- * Thich / luu cua trinh duyet nay duoc gop vao tai khoan.
+ * Thich / luu va lich su feed an danh cua trinh duyet nay duoc gop vao tai khoan.
  */
 export const POST: APIRoute = async ({ request }) => {
   const limited = await authLimited(env.AUTH_LIMITER, request);
   if (limited) return limited;
 
   const body = await readJsonBody(request);
+  const now = Math.floor(Date.now() / 1000);
 
   try {
     const result = await login(
       createD1AccountStore(env.DB),
       body,
       cookieActor(request),
-      Math.floor(Date.now() / 1000)
+      now
     );
 
     if (!result.ok) {
@@ -39,7 +40,7 @@ export const POST: APIRoute = async ({ request }) => {
         : interactionJson({ success: false, error: "Invalid request" }, 400);
     }
 
-    return signedInResponse(request, result, 200);
+    return signedInWithFeedMerge(env.DB, request, result, 200, now);
   } catch (error) {
     console.error("Login error:", error);
     return interactionJson({ success: false, error: "Unable to log in" }, 500);

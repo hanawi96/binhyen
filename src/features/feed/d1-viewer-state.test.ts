@@ -7,6 +7,7 @@ import {
   ANONYMOUS_VIEWER,
   MAX_SEEN_WRITE_ATTEMPTS,
   ViewerStateBusyError,
+  mergeViewerFeedState,
   readFeedViewer,
   recordSeen,
   resetViewerLoop,
@@ -521,5 +522,154 @@ describe("recordSeen", () => {
     expect(kept.match(/SEARCH r USING INDEX idx_content_reactions_actor \(actor_id=\?\)/g)).toHaveLength(2);
     expect(kept).toMatch(/SEARCH c USING INDEX sqlite_autoindex_contents_1 \(id=\?\)/);
     expect(kept).not.toMatch(/SCAN/);
+  });
+});
+
+describe("mergeViewerFeedState", () => {
+  const seqsOf = (state: ViewerState | null | undefined) =>
+    [1, 2, 3, 4].filter((seq) => hasSeen(state?.seen ?? new Uint8Array(0), seq));
+
+  it("đăng ký: đổi khóa a: sang u: khi tài khoản chưa có lịch sử", async () => {
+    const { db, sqlite } = await setup();
+
+    sqlite.prepare(`DELETE FROM viewer_feed_state WHERE viewer_key = ?`).run(`u:${USER}`);
+    // Dang ky claim ma an danh: actors.user_id = USER.
+    sqlite.prepare(`UPDATE actors SET user_id = ? WHERE id = ?`).run(USER, ACTOR);
+
+    const outcome = await mergeViewerFeedState(db, {
+      userId: USER,
+      actorId: ACTOR,
+      now: NOW
+    });
+    const user = await readFeedViewer(db, cookie({ [SESSION_COOKIE]: TOKEN }), NOW);
+    const anon = await readFeedViewer(db, cookie({ [ACTOR_COOKIE]: ACTOR }), NOW);
+
+    expect(outcome.merged).toBe(true);
+    expect(user.key).toBe(`u:${USER}`);
+    expect(user.state?.seenCount).toBe(2);
+    expect(seqsOf(user.state)).toEqual([1, 2]);
+    expect(user.state?.positions.get("all:all")).toBe("v6:x");
+    // Dong a: da doi thanh u:; cookie chi con ma an danh khong con trang thai.
+    expect(anon.key).toBe(`a:${ACTOR}`);
+    expect(anon.state).toBeNull();
+    expect(
+      sqlite
+        .prepare(`SELECT COUNT(*) AS n FROM viewer_feed_state WHERE viewer_key = ?`)
+        .get(`a:${ACTOR}`) as { n: number }
+    ).toEqual({ n: 0 });
+  });
+
+  it("đăng nhập máy khác: OR bitmap, xóa dòng ẩn danh", async () => {
+    const { db, sqlite } = await setup();
+    const NEW = "WwWwWwWwWwWwWwWwWwWwWw";
+
+    sqlite.prepare(`INSERT INTO actors (id) VALUES (?)`).run(NEW);
+    sqlite
+      .prepare(
+        `INSERT INTO viewer_feed_state
+           (viewer_key, seen_bits, seen_count, positions_json, fresh_at, loop_count, version)
+         VALUES (?, ?, 1, ?, 800, 1, 0)`
+      )
+      .run(
+        `a:${NEW}`,
+        new Uint8Array(seenBlob(markSeen(new Uint8Array(0), [3]).bits)),
+        JSON.stringify({ "science:all": "v6:device" })
+      );
+
+    // mergeActor da xoa ma an danh; van phai gop dong a: mo coi.
+    sqlite.prepare(`DELETE FROM actors WHERE id = ?`).run(NEW);
+
+    const outcome = await mergeViewerFeedState(db, {
+      userId: USER,
+      actorId: NEW,
+      now: NOW
+    });
+    const after = await readFeedViewer(db, cookie({ [SESSION_COOKIE]: TOKEN }), NOW);
+
+    expect(outcome.merged).toBe(true);
+    expect(seqsOf(after.state)).toEqual([1, 2, 3, 4]);
+    expect(after.state?.seenCount).toBe(4);
+    expect(after.state?.freshAt).toBe(800);
+    expect(after.state?.loopCount).toBe(1);
+    expect(after.state?.positions.get("science:all")).toBe("v6:device");
+    expect(after.state?.version).toBe(4);
+    expect(
+      sqlite
+        .prepare(`SELECT COUNT(*) AS n FROM viewer_feed_state WHERE viewer_key GLOB 'a:*'`)
+        .get() as { n: number }
+    ).toEqual({ n: 1 }); // chi con a:ACTOR cua setup, khong con a:NEW
+  });
+
+  it("không có cookie ẩn danh hoặc chưa có dòng a:: không ghi", async () => {
+    const { db, counter } = await setup();
+
+    expect(
+      await mergeViewerFeedState(db, { userId: USER, actorId: null, now: NOW })
+    ).toEqual({ merged: false });
+    expect(
+      await mergeViewerFeedState(db, {
+        userId: USER,
+        actorId: "QqQqQqQqQqQqQqQqQqQqQq",
+        now: NOW
+      })
+    ).toEqual({ merged: false });
+    // Chi doc actors + hai trang thai (hoac it hon).
+    expect(counter.statements).toBeLessThanOrEqual(6);
+  });
+
+  it("mã thuộc tài khoản khác: không lấy lịch sử của họ", async () => {
+    const { db, sqlite } = await setup();
+    const OTHER_USER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+    sqlite
+      .prepare(
+        `INSERT INTO users (id, email, display_name, password_hash)
+         VALUES (?, 'o@b.vn', 'O', ?)`
+      )
+      .run(OTHER_USER, "x".repeat(40));
+    sqlite.prepare(`UPDATE actors SET user_id = ? WHERE id = ?`).run(OTHER_USER, ACTOR);
+
+    const before = await readFeedViewer(db, cookie({ [SESSION_COOKIE]: TOKEN }), NOW);
+    const outcome = await mergeViewerFeedState(db, {
+      userId: USER,
+      actorId: ACTOR,
+      now: NOW
+    });
+
+    expect(outcome.merged).toBe(false);
+    expect(
+      (sqlite
+        .prepare(`SELECT seen_count FROM viewer_feed_state WHERE viewer_key = ?`)
+        .get(`u:${USER}`) as { seen_count: number }).seen_count
+    ).toBe(before.state?.seenCount);
+    expect(
+      (sqlite
+        .prepare(`SELECT COUNT(*) AS n FROM viewer_feed_state WHERE viewer_key = ?`)
+        .get(`a:${ACTOR}`) as { n: number }).n
+    ).toBe(1);
+  });
+
+  it("vị trí trùng bộ lọc: bản ẩn danh (thiết bị vừa xem) thắng", async () => {
+    const { db, sqlite } = await setup();
+    const NEW = "XxXxXxXxXxXxXxXxXxXxXx";
+
+    sqlite.prepare(`INSERT INTO actors (id) VALUES (?)`).run(NEW);
+    sqlite
+      .prepare(
+        `UPDATE viewer_feed_state SET positions_json = ? WHERE viewer_key = ?`
+      )
+      .run(JSON.stringify({ "all:all": "v6:account-pos" }), `u:${USER}`);
+    sqlite
+      .prepare(
+        `INSERT INTO viewer_feed_state
+           (viewer_key, seen_bits, seen_count, positions_json, fresh_at)
+         VALUES (?, x'', 0, ?, 100)`
+      )
+      .run(`a:${NEW}`, JSON.stringify({ "all:all": "v6:device-pos" }));
+
+    await mergeViewerFeedState(db, { userId: USER, actorId: NEW, now: NOW });
+    const after = await readFeedViewer(db, cookie({ [SESSION_COOKIE]: TOKEN }), NOW);
+
+    expect(after.state?.positions.get("all:all")).toBe("v6:device-pos");
   });
 });

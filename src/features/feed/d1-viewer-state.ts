@@ -1,6 +1,7 @@
 import { hashSessionToken, readSessionToken } from "../account/account";
 import { readActorId } from "../actor/actor";
 import { isContentTopic, type ContentTopic } from "../content/content.types";
+import { mergeViewerStates } from "./merge-viewer-state";
 import { markSeen, seenBlob, toSeenBits } from "./seen-bits";
 import {
   applySeenReport,
@@ -9,7 +10,7 @@ import {
   type SeenReport,
   type SeenTarget
 } from "./seen-report";
-import { resolveViewerKey } from "./viewer-key";
+import { actorViewerKey, resolveViewerKey, userViewerKey } from "./viewer-key";
 import { parsePositions } from "./viewer-positions";
 
 export interface ViewerState {
@@ -365,4 +366,193 @@ export async function recordSeen(
   }
 
   throw new ViewerStateBusyError();
+}
+
+async function writeMergedViewerState(
+  db: D1Database,
+  intoKey: string,
+  fromKey: string,
+  into: ViewerState | null,
+  merged: ReturnType<typeof mergeViewerStates>,
+  now: number,
+  /** false: khong kiem version (buoc cuoi sau khi thu lai). */
+  requireVersion: boolean
+): Promise<boolean> {
+  if (!into) {
+    const renamed = await db
+      .prepare(
+        `UPDATE viewer_feed_state
+         SET viewer_key = ?1, updated_at = ?2
+         WHERE viewer_key = ?3
+           AND NOT EXISTS (
+             SELECT 1 FROM viewer_feed_state WHERE viewer_key = ?1
+           )`
+      )
+      .bind(intoKey, now, fromKey)
+      .run();
+
+    return renamed.meta.changes > 0;
+  }
+
+  const updated = requireVersion
+    ? await db
+        .prepare(
+          `UPDATE viewer_feed_state
+           SET seen_bits = COALESCE(?1, x''),
+               seen_count = ?2,
+               positions_json = ?3,
+               fresh_at = ?4,
+               loop_count = ?5,
+               version = version + 1,
+               updated_at = ?6
+           WHERE viewer_key = ?7 AND version = ?8`
+        )
+        .bind(
+          seenBlob(merged.seen),
+          merged.seenCount,
+          merged.positionsJson,
+          merged.freshAt,
+          merged.loopCount,
+          now,
+          intoKey,
+          into.version
+        )
+        .run()
+    : await db
+        .prepare(
+          `UPDATE viewer_feed_state
+           SET seen_bits = COALESCE(?1, x''),
+               seen_count = ?2,
+               positions_json = ?3,
+               fresh_at = ?4,
+               loop_count = ?5,
+               version = version + 1,
+               updated_at = ?6
+           WHERE viewer_key = ?7`
+        )
+        .bind(
+          seenBlob(merged.seen),
+          merged.seenCount,
+          merged.positionsJson,
+          merged.freshAt,
+          merged.loopCount,
+          now,
+          intoKey
+        )
+        .run();
+
+  if (updated.meta.changes === 0) return false;
+
+  await db
+    .prepare(`DELETE FROM viewer_feed_state WHERE viewer_key = ?1`)
+    .bind(fromKey)
+    .run();
+
+  return true;
+}
+
+/**
+ * Sau dang nhap / dang ky: gop bitmap an danh vao tai khoan, xoa dong a:.
+ * Chi gop khi ma an danh chua thuoc ai hoac dung la cua tai khoan nay
+ * (vua claim khi dang ky). Ma cua nguoi khac thi bo qua.
+ */
+export async function mergeViewerFeedState(
+  db: D1Database,
+  input: {
+    userId: string;
+    actorId: string | null;
+    now: number;
+  }
+): Promise<{ merged: boolean }> {
+  const intoKey = userViewerKey(input.userId);
+  const fromKey = input.actorId ? actorViewerKey(input.actorId) : null;
+
+  if (!intoKey || !fromKey || !input.actorId) {
+    return { merged: false };
+  }
+
+  const owner = await db
+    .prepare(`SELECT user_id FROM actors WHERE id = ?1`)
+    .bind(input.actorId)
+    .first<{ user_id: string | null }>();
+
+  // Ma da xoa (mergeActor) hoac chua co hang: van gop dong a: mo coi.
+  // Ma dang thuoc tai khoan khac: khong lay lich su cua ho.
+  if (owner && owner.user_id !== null && owner.user_id !== input.userId) {
+    return { merged: false };
+  }
+
+  for (let attempt = 0; attempt < MAX_SEEN_WRITE_ATTEMPTS; attempt++) {
+    const into = await readViewerState(db, intoKey);
+    const from = await readViewerState(db, fromKey);
+
+    if (!from) return { merged: false };
+
+    const ok = await writeMergedViewerState(
+      db,
+      intoKey,
+      fromKey,
+      into,
+      mergeViewerStates(into, from),
+      input.now,
+      true
+    );
+
+    if (ok) return { merged: true };
+  }
+
+  // Cookie sap tro sang ma chinh: khong de dong a: mo coi.
+  const into = await readViewerState(db, intoKey);
+  const from = await readViewerState(db, fromKey);
+
+  if (!from) return { merged: false };
+
+  if (into) {
+    await writeMergedViewerState(
+      db,
+      intoKey,
+      fromKey,
+      into,
+      mergeViewerStates(into, from),
+      input.now,
+      false
+    );
+    return { merged: true };
+  }
+
+  // u: van khong co: INSERT roi xoa a: (tranh UNIQUE khi doi khoa).
+  const merged = mergeViewerStates(null, from);
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO viewer_feed_state (
+           viewer_key, seen_bits, seen_count, positions_json,
+           fresh_at, loop_count, created_at, updated_at
+         )
+         VALUES (?1, COALESCE(?2, x''), ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(viewer_key) DO UPDATE SET
+           seen_bits = COALESCE(excluded.seen_bits, x''),
+           seen_count = excluded.seen_count,
+           positions_json = excluded.positions_json,
+           fresh_at = excluded.fresh_at,
+           loop_count = excluded.loop_count,
+           version = viewer_feed_state.version + 1,
+           updated_at = excluded.updated_at`
+      )
+      .bind(
+        intoKey,
+        seenBlob(merged.seen),
+        merged.seenCount,
+        merged.positionsJson,
+        merged.freshAt,
+        merged.loopCount,
+        input.now
+      ),
+    db
+      .prepare(`DELETE FROM viewer_feed_state WHERE viewer_key = ?1`)
+      .bind(fromKey)
+  ]);
+
+  return { merged: true };
 }

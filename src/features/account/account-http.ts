@@ -1,4 +1,5 @@
 import { actorCookie, readActorId } from "../actor/actor";
+import { mergeViewerFeedState } from "../feed/d1-viewer-state";
 import { interactionJson } from "../interactions/interaction-http";
 import { allowed, clientIp, type Limiter } from "../interactions/rate-limit";
 import { sessionCookie, type SignedIn } from "./account";
@@ -40,4 +41,24 @@ export function signedInResponse(
   response.headers.append("Set-Cookie", sessionCookie(result.token, secure));
   response.headers.append("Set-Cookie", actorCookie(result.actorId, secure));
   return response;
+}
+
+/**
+ * Gop lich su feed an danh vao tai khoan roi tra cookie phien.
+ * Goi sau login/register thanh cong; dung cookie actor truoc khi doi sang ma chinh.
+ */
+export async function signedInWithFeedMerge(
+  db: D1Database,
+  request: Request,
+  result: SignedIn,
+  status: number,
+  now: number
+): Promise<Response> {
+  await mergeViewerFeedState(db, {
+    userId: result.user.id,
+    actorId: cookieActor(request),
+    now
+  });
+
+  return signedInResponse(request, result, status);
 }
