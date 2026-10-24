@@ -102,6 +102,8 @@
 
   const ANIMATION_MS = 400;
   const SWIPE_DISTANCE = 70;
+  const READ_SWIPE_DISTANCE = 56;
+  const AXIS_LOCK = 10;
   const MIN_FAST_DISTANCE = 30;
   const FAST_VELOCITY = 0.65;
 
@@ -773,9 +775,13 @@
 
   // Pointer state
   let activePointerId: number | null = null;
+  let startX = 0;
   let startY = 0;
   let startTime = 0;
   let lastDistance = 0;
+  let lastDistanceX = 0;
+  /** none = chua khoa truc; y = doi the; x = mo doc bai */
+  let dragAxis: "none" | "x" | "y" = "none";
 
   // Animation state
   let pendingIndex: number | null = null;
@@ -784,6 +790,7 @@
   let transitionFrame2 = 0;
   let fallbackTimer = 0;
   let queuedOffset = 0;
+  let queuedDragX = 0;
   let deckHeight = 1;
 
   function measureDeck() {
@@ -817,6 +824,12 @@
     );
   }
 
+  function setDragX(value: number) {
+    if (!deckElement) return;
+
+    deckElement.style.setProperty("--drag-x", `${value}px`);
+  }
+
   function cancelDragFrame() {
     if (dragFrame) {
       cancelAnimationFrame(dragFrame);
@@ -824,15 +837,24 @@
     }
   }
 
-  function queueOffset(value: number) {
-    queuedOffset = value;
-
+  function scheduleDragFrame() {
     if (dragFrame) return;
 
     dragFrame = requestAnimationFrame(() => {
       dragFrame = 0;
       setOffset(queuedOffset);
+      setDragX(queuedDragX);
     });
+  }
+
+  function queueOffset(value: number) {
+    queuedOffset = value;
+    scheduleDragFrame();
+  }
+
+  function queueDragX(value: number) {
+    queuedDragX = value;
+    scheduleDragFrame();
   }
 
   function clearTransitionTasks() {
@@ -883,6 +905,9 @@
     if (animating) return;
 
     dragging = false;
+    dragAxis = "none";
+    queuedDragX = 0;
+    setDragX(0);
     animating = true;
     pendingIndex = nextIndex;
 
@@ -1306,7 +1331,20 @@
   function openReading(target?: ReadItem, fromMine = false) {
     const item = target ?? contents[currentIndex];
     if (!item || reading) return;
-    if (!fromMine && (animating || dragging || replaceOnLoad)) return;
+    if (!fromMine && (animating || replaceOnLoad)) return;
+    if (!fromMine && dragging && dragAxis !== "x") return;
+
+    // Dong keo ngang (neu co) truoc khi mo reader.
+    if (dragging) {
+      cancelDragFrame();
+      dragging = false;
+      activePointerId = null;
+      dragAxis = "none";
+      queuedOffset = 0;
+      queuedDragX = 0;
+      setOffset(0);
+      setDragX(0);
+    }
 
     window.clearTimeout(closeTimer);
     const serial = ++readSerial;
@@ -1379,6 +1417,10 @@
     }, 200);
   }
 
+  function setReadDragX(node: HTMLElement, value: number) {
+    node.style.setProperty("--read-drag-x", `${value}px`);
+  }
+
   function readNext() {
     if (!canNext || animating || readFromMine) return;
 
@@ -1404,7 +1446,36 @@
     }, 200);
   }
 
-  function readWheel(node: HTMLElement) {
+  function readGestures(node: HTMLElement) {
+    let pointerId = -1;
+    let startX = 0;
+    let startY = 0;
+    let startTime = 0;
+    let lastX = 0;
+    let axis: "none" | "x" | "y" = "none";
+    let frame = 0;
+    let queuedX = 0;
+
+    function paintX(value: number) {
+      queuedX = value;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setReadDragX(node, queuedX);
+      });
+    }
+
+    function clearPointer() {
+      pointerId = -1;
+      axis = "none";
+      lastX = 0;
+      node.classList.remove("is-swiping");
+      if (frame) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    }
+
     function onWheel(event: WheelEvent) {
       if (!readScroll || readScroll.scrollTop > 0 || event.deltaY >= -20) return;
 
@@ -1412,11 +1483,116 @@
       closeReading();
     }
 
+    function onPointerDown(event: PointerEvent) {
+      if (!event.isPrimary || reading === false) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("button, a, input, textarea, select")
+      ) {
+        return;
+      }
+
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startY = event.clientY;
+      startTime = performance.now();
+      lastX = 0;
+      axis = "none";
+      setReadDragX(node, 0);
+    }
+
+    function onPointerMove(event: PointerEvent) {
+      if (event.pointerId !== pointerId) return;
+
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+
+      if (axis === "none") {
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        if (adx < AXIS_LOCK && ady < AXIS_LOCK) return;
+
+        // Chi khoa ngang khi vuot phai (back); de vuot doc cuon binh thuong.
+        if (adx > ady && dx > 0) {
+          axis = "x";
+          node.classList.add("is-swiping");
+          try {
+            node.setPointerCapture(pointerId);
+          } catch {
+            /* ignore */
+          }
+        } else {
+          axis = "y";
+          return;
+        }
+      }
+
+      if (axis !== "x") return;
+
+      event.preventDefault();
+      const width = node.clientWidth || 320;
+      lastX = Math.max(0, Math.min(width * 0.45, dx));
+      paintX(lastX);
+    }
+
+    function onPointerUp(event: PointerEvent) {
+      finishPointer(event, false);
+    }
+
+    function onPointerCancel(event: PointerEvent) {
+      finishPointer(event, true);
+    }
+
+    function finishPointer(event: PointerEvent, cancelled: boolean) {
+      if (event.pointerId !== pointerId) return;
+
+      const dx = cancelled ? lastX : Math.max(0, event.clientX - startX);
+      const elapsed = Math.max(performance.now() - startTime, 1);
+      const velocity = dx / elapsed;
+      const wasX = axis === "x";
+
+      if (node.hasPointerCapture(event.pointerId)) {
+        node.releasePointerCapture(event.pointerId);
+      }
+
+      clearPointer();
+
+      if (!wasX || cancelled) {
+        setReadDragX(node, 0);
+        return;
+      }
+
+      const shouldClose =
+        dx >= READ_SWIPE_DISTANCE ||
+        (dx >= MIN_FAST_DISTANCE && velocity >= FAST_VELOCITY);
+
+      if (shouldClose) {
+        setReadDragX(node, 0);
+        closeReading();
+        return;
+      }
+
+      setReadDragX(node, dx);
+      requestAnimationFrame(() => setReadDragX(node, 0));
+    }
+
     node.addEventListener("wheel", onWheel, { passive: false });
+    node.addEventListener("pointerdown", onPointerDown);
+    node.addEventListener("pointermove", onPointerMove, { passive: false });
+    node.addEventListener("pointerup", onPointerUp);
+    node.addEventListener("pointercancel", onPointerCancel);
 
     return {
       destroy() {
+        if (frame) cancelAnimationFrame(frame);
         node.removeEventListener("wheel", onWheel);
+        node.removeEventListener("pointerdown", onPointerDown);
+        node.removeEventListener("pointermove", onPointerMove);
+        node.removeEventListener("pointerup", onPointerUp);
+        node.removeEventListener("pointercancel", onPointerCancel);
       }
     };
   }
@@ -1490,6 +1666,15 @@
     return offset;
   }
 
+  function getDragX(distance: number) {
+    const width = deckElement?.clientWidth || 320;
+    const limit = width * 0.42;
+    // Vuot trai (am) de mo bai; phai chi nhe de khong vuong.
+    let x = Math.max(-limit, Math.min(limit * 0.18, distance));
+    if (x > 0) x *= 0.28;
+    return x;
+  }
+
   function handlePointerDown(event: PointerEvent) {
     if (
       reading ||
@@ -1521,13 +1706,19 @@
     }
 
     activePointerId = event.pointerId;
+    startX = event.clientX;
     startY = event.clientY;
     startTime = performance.now();
     lastDistance = 0;
+    lastDistanceX = 0;
+    dragAxis = "none";
 
     measureDeck();
     dragging = true;
+    queuedOffset = 0;
+    queuedDragX = 0;
     setOffset(0);
+    setDragX(0);
 
     deckElement.focus({ preventScroll: true });
 
@@ -1546,10 +1737,37 @@
       return;
     }
 
-    lastDistance = event.clientY - startY;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    lastDistanceX = dx;
+    lastDistance = dy;
+
+    if (dragAxis === "none") {
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      if (adx < AXIS_LOCK && ady < AXIS_LOCK) return;
+
+      if (adx > ady && contents[currentIndex]?.hasArticle) {
+        dragAxis = "x";
+        queuedOffset = 0;
+        setOffset(0);
+      } else if (ady >= adx) {
+        dragAxis = "y";
+        queuedDragX = 0;
+        setDragX(0);
+      } else {
+        // Vuot ngang nhung the khong co bai — bo qua, khong khoa truc.
+        return;
+      }
+    }
+
+    if (dragAxis === "x") {
+      queueDragX(getDragX(dx));
+      return;
+    }
 
     // Chi cap nhat vi tri toi da mot lan moi frame.
-    queueOffset(getDragOffset(lastDistance));
+    queueOffset(getDragOffset(dy));
   }
 
   function finishDrag(
@@ -1563,6 +1781,10 @@
       return;
     }
 
+    const axis = dragAxis;
+    const distanceX = cancelled
+      ? lastDistanceX
+      : event.clientX - startX;
     const distance = cancelled
       ? lastDistance
       : event.clientY - startY;
@@ -1572,20 +1794,56 @@
       1
     );
 
-    const velocity = Math.abs(distance) / elapsed;
-
     cancelDragFrame();
-
-    const height = measureDeck();
-    setOffset(getDragOffset(distance));
-
     activePointerId = null;
+    dragAxis = "none";
 
     if (deckElement.hasPointerCapture(event.pointerId)) {
       deckElement.releasePointerCapture(event.pointerId);
     }
 
-    if (cancelled || Math.abs(distance) < 5) {
+    if (axis === "x") {
+      const velocity = Math.abs(distanceX) / elapsed;
+      const canRead = !!contents[currentIndex]?.hasArticle;
+      const shouldOpen =
+        !cancelled &&
+        canRead &&
+        distanceX < 0 &&
+        (
+          Math.abs(distanceX) >= READ_SWIPE_DISTANCE ||
+          (
+            Math.abs(distanceX) >= MIN_FAST_DISTANCE &&
+            velocity >= FAST_VELOCITY
+          )
+        );
+
+      dragging = false;
+      queuedOffset = 0;
+      setOffset(0);
+
+      if (shouldOpen) {
+        queuedDragX = 0;
+        setDragX(0);
+        openReading();
+        return;
+      }
+
+      // Snap ve — bo .dragging de CSS transition chay.
+      setDragX(getDragX(distanceX));
+      requestAnimationFrame(() => {
+        queuedDragX = 0;
+        setDragX(0);
+      });
+      return;
+    }
+
+    const velocity = Math.abs(distance) / elapsed;
+    const height = measureDeck();
+    setOffset(getDragOffset(distance));
+    queuedDragX = 0;
+    setDragX(0);
+
+    if (cancelled || axis === "none" || Math.abs(distance) < 5) {
       startTransition(null, 0);
       return;
     }
@@ -1682,6 +1940,7 @@
         const pointer = activePointerId;
         activePointerId = null;
         dragging = false;
+        dragAxis = "none";
 
         if (deckElement.hasPointerCapture(pointer)) {
           deckElement.releasePointerCapture(pointer);
@@ -1689,6 +1948,8 @@
       }
 
       cancelDragFrame();
+      queuedOffset = 0;
+      queuedDragX = 0;
 
       if (animating) {
         if (fadeSwap) {
@@ -1699,6 +1960,7 @@
         }
       } else {
         setOffset(0);
+        setDragX(0);
       }
     }
 
@@ -1808,7 +2070,7 @@
         class:inactive={index !== currentIndex}
         aria-hidden={index !== currentIndex}
         inert={index !== currentIndex}
-        style={`transform: translate3d(0, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
+        style={`transform: translate3d(${index === currentIndex ? "var(--drag-x, 0px)" : "0px"}, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
         ontransitionend={(event) => handleTransitionEnd(event, index)}
       >
         <ContentCard
@@ -2054,7 +2316,7 @@
     <article
       class="reader"
       class:shown={readerShown}
-      use:readWheel
+      use:readGestures
       aria-labelledby={`read-title-${item.id}`}
     >
       <div class="reader-scroll" bind:this={readScroll}>
@@ -3020,16 +3282,21 @@
     flex-direction: column;
     overflow: hidden;
     opacity: 0;
-    transform: translateY(16px);
+    transform: translate3d(var(--read-drag-x, 0px), 16px, 0);
     transition:
       opacity 200ms ease,
       transform 200ms ease !important;
     container-type: inline-size;
+    touch-action: pan-y;
   }
 
   .reader.shown {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(var(--read-drag-x, 0px), 0, 0);
+  }
+
+  .reader.is-swiping {
+    transition: none !important;
   }
 
   .reader-dock {
