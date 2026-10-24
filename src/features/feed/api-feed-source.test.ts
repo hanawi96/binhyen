@@ -126,6 +126,23 @@ describe("API feed requests", () => {
     expect(calls).toBe(1);
   });
 
+  it("nhận pageCursor và notice all-seen", async () => {
+    const feed = source(async () =>
+      jsonResponse({
+        success: true,
+        items: [item("1")],
+        nextCursor: "n",
+        hasMore: true,
+        pageCursor: "v6:start",
+        notice: "all-seen"
+      })
+    );
+    const page = await feed.loadPage("__first__", 3);
+
+    expect(page.pageCursor).toBe("v6:start");
+    expect(page.notice).toBe("all-seen");
+  });
+
   it("stops when the same cursor is requested again", async () => {
     let calls = 0;
     const feed = source(async () => {

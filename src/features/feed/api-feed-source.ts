@@ -118,6 +118,8 @@ interface ApiResponse {
   nextCursor: string | null;
   hasMore: boolean;
   matched?: boolean;
+  pageCursor?: string | null;
+  notice?: "all-seen" | null;
 }
 
 function isContent(value: unknown): value is ContentItem {
@@ -272,24 +274,36 @@ export function createApiFeedSource(
         payload.success !== true ||
         !Array.isArray(payload.items) ||
         !payload.items.every(isContent) ||
-          !(
-            payload.nextCursor === null ||
-            typeof payload.nextCursor === "string"
-          ) ||
-          !(
-            payload.matched === undefined ||
-            typeof payload.matched === "boolean"
-          )
-        ) {
-          throw new FeedLoadError("invalid", "Invalid feed data");
-        }
+        !(
+          payload.nextCursor === null ||
+          typeof payload.nextCursor === "string"
+        ) ||
+        !(
+          payload.matched === undefined ||
+          typeof payload.matched === "boolean"
+        ) ||
+        !(
+          payload.pageCursor === undefined ||
+          payload.pageCursor === null ||
+          typeof payload.pageCursor === "string"
+        ) ||
+        !(
+          payload.notice === undefined ||
+          payload.notice === null ||
+          payload.notice === "all-seen"
+        )
+      ) {
+        throw new FeedLoadError("invalid", "Invalid feed data");
+      }
 
       completed.add(cursor);
 
       return {
         items: payload.items,
         nextCursor: payload.nextCursor,
-        matched: payload.matched
+        matched: payload.matched,
+        pageCursor: payload.pageCursor ?? null,
+        notice: payload.notice ?? null
       };
     }
   };

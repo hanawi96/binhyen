@@ -30,17 +30,28 @@
     splitSentences,
     type ArticleBlock
   } from "./read-blocks";
+  import {
+    browserStorage,
+    pushRecentSeen,
+    readRecentSeen,
+    writeRecentSeen
+  } from "./recent-seen";
+  import { createSeenReporter } from "./report-seen";
 
   let {
     initialItems = [],
     initialCursor = null,
+    initialPageCursor = null,
     initialMatched = true,
+    initialNotice = null,
     initialUser,
     initialPostNews = 0
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
+    initialPageCursor?: string | null;
     initialMatched?: boolean;
+    initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
   } = $props();
@@ -72,6 +83,8 @@
   const NEXT_PAGE_STATUS = "Đang chuẩn bị nội dung tiếp theo...";
   const OTHER_ITEMS_NOTE =
     "Chưa có nội dung cho lựa chọn này. Bạn đang xem những điều khác.";
+  const ALL_SEEN_NOTE =
+    "Bạn đã xem hết một vòng. Đang mở lại những bài cũ hơn.";
   const END_NOTE = "Bạn đã xem hết những điều đang có.";
   const RESTART_LABEL = "Xem lại từ đầu";
   const RETRY_LABEL = "Thử lại";
@@ -80,6 +93,8 @@
     "Không có kết nối. Hãy thử lại.",
     "Không thể tải thêm nội dung."
   ];
+  /** Trang rong (toan bai da xem) van con cursor: tu tai tiep, toi da vay lan. */
+  const MAX_EMPTY_CONTINUES = 5;
 
   let source = createApiFeedSource("all", "all");
 
@@ -92,10 +107,24 @@
   let loading = $state(false);
   let loadError = $state("");
   let directMatch = $state(initialMatched);
+  let feedNotice = $state<"all-seen" | null>(initialNotice);
   let loadSerial = 0;
   let loadController: AbortController | null = null;
   // Trang loc moi thay ca bo the, khong noi vao the cu.
   let replaceOnLoad = $state(false);
+
+  /** pageCursor theo tung id de bao da xem dung vi tri. */
+  const pageCursors = new Map<string, string | null>();
+  const seenReporter = createSeenReporter();
+
+  function rememberPageCursor(
+    items: readonly ContentItem[],
+    pageCursor: string | null
+  ) {
+    for (const item of items) pageCursors.set(item.id, pageCursor);
+  }
+
+  rememberPageCursor(initialItems, initialPageCursor);
 
   // Bo ket qua cu neu bo loc thay doi khi dang tai.
   let feedVersion = 0;
@@ -576,7 +605,10 @@
     userKnown = true;
     postNews = 0;
     resetReactions();
-    refreshForYou();
+    // Gui not lich su an danh truoc khi tai lai feed tai khoan.
+    void seenReporter.flush().finally(() => {
+      refreshForYou();
+    });
     void fetchMe()
       .then((value) => {
         if (value.user?.id === user?.id) postNews = value.postNews;
@@ -589,7 +621,9 @@
     userKnown = true;
     postNews = 0;
     resetReactions();
-    refreshForYou();
+    void seenReporter.flush().finally(() => {
+      refreshForYou();
+    });
   }
 
   function onProfileSaved(next: AccountUser, topicsChanged: boolean) {
@@ -691,6 +725,9 @@
   let showingOtherItems = $derived(
     filtered && !directMatch && contents.length > 0 && !loadError
   );
+  let showingAllSeen = $derived(
+    feedNotice === "all-seen" && contents.length > 0 && !loadError
+  );
   let showWaiting = $state(false);
   let emptyCopy = $derived(
     loadError
@@ -768,6 +805,16 @@
 
       seenIds.add(id);
       seenCount = seenIds.size;
+
+      const storage = browserStorage();
+      if (storage) {
+        writeRecentSeen(storage, pushRecentSeen(readRecentSeen(storage), id));
+      }
+
+      seenReporter.mark(
+        id,
+        lovedMode ? null : (pageCursors.get(id) ?? null)
+      );
     }, 900);
 
     return () => window.clearTimeout(timer);
@@ -979,48 +1026,72 @@
     loadError = "";
 
     const activeSource = source;
-    const activeCursor = nextCursor;
+    let emptyContinues = 0;
 
     try {
-      const page = await activeSource.loadPage(
-        activeCursor,
-        PAGE_SIZE,
-        controller.signal
-      );
+      while (serial === loadSerial && expectedVersion === feedVersion) {
+        const activeCursor = nextCursor;
 
-      // Ket qua cua bo loc cu khong duoc chen vao feed moi.
-      if (serial !== loadSerial || expectedVersion !== feedVersion) {
-        return;
-      }
+        if (activeCursor === null) break;
 
-      if (replaceOnLoad) {
-        replaceOnLoad = false;
+        const page = await activeSource.loadPage(
+          activeCursor,
+          PAGE_SIZE,
+          controller.signal
+        );
 
-        if (topicFading) {
-          swapAfterFade(page.items);
-        } else {
-          contents = page.items;
-          currentIndex = 0;
-          setOffset(0);
+        // Ket qua cua bo loc cu khong duoc chen vao feed moi.
+        if (serial !== loadSerial || expectedVersion !== feedVersion) {
+          return;
         }
-      } else {
-        const loadedIds = new Set(
-          contents.map((item) => item.id)
-        );
 
-        const newItems = page.items.filter(
-          (item) => !loadedIds.has(item.id)
-        );
+        rememberPageCursor(page.items, page.pageCursor ?? null);
 
-        contents = [...contents, ...newItems];
+        if (page.notice === "all-seen") feedNotice = "all-seen";
+
+        const storage = browserStorage();
+        const recent = new Set(storage ? readRecentSeen(storage) : []);
+        let added = 0;
+
+        if (replaceOnLoad) {
+          replaceOnLoad = false;
+          added = page.items.length;
+
+          if (topicFading) {
+            swapAfterFade(page.items);
+          } else {
+            contents = page.items;
+            currentIndex = 0;
+            setOffset(0);
+          }
+        } else {
+          const loadedIds = new Set(contents.map((item) => item.id));
+          const newItems = page.items.filter(
+            (item) => !loadedIds.has(item.id) && !recent.has(item.id)
+          );
+
+          added = newItems.length;
+          contents = [...contents, ...newItems];
+        }
+
+        if (activeCursor === "__first__") {
+          directMatch = page.matched !== false;
+        }
+
+        nextCursor = page.nextCursor;
+        hasMore = nextCursor !== null;
+
+        // Trang khong them the moi nhung van con cursor: tai tiep.
+        if (
+          added > 0 ||
+          nextCursor === null ||
+          emptyContinues >= MAX_EMPTY_CONTINUES
+        ) {
+          break;
+        }
+
+        emptyContinues += 1;
       }
-
-      if (activeCursor === "__first__") {
-        directMatch = page.matched !== false;
-      }
-
-      nextCursor = page.nextCursor;
-      hasMore = nextCursor !== null;
     } catch (error) {
       if (
         serial !== loadSerial ||
@@ -1053,6 +1124,8 @@
   ) {
     if (dragging || animating) return;
 
+    void seenReporter.flush();
+
     const newSource = createApiFeedSource(
       topic,
       mood,
@@ -1065,6 +1138,7 @@
     // Huy request cu roi mo phien feed moi.
     cancelLoad();
     feedVersion += 1;
+    pageCursors.clear();
 
     source = newSource;
     selectedTopic = topic;
@@ -1076,6 +1150,7 @@
     loading = false;
     loadError = "";
     directMatch = true;
+    feedNotice = null;
     replaceOnLoad = true;
 
     setOffset(0);
@@ -1927,6 +2002,8 @@
 
   // STEP18_API_INTEGRATION
   onMount(() => {
+    void seenReporter.flush();
+
     if (contents.length === 0) {
       void loadMore();
     }
@@ -1934,6 +2011,11 @@
 
     function handleVisibilityChange() {
       pageVisible = !document.hidden;
+
+      if (document.hidden) {
+        seenReporter.flushOnLeave();
+      }
+
       if (!document.hidden) return;
 
       if (activePointerId !== null) {
@@ -1964,6 +2046,10 @@
       }
     }
 
+    function handlePageHide() {
+      seenReporter.flushOnLeave();
+    }
+
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape" || (!reading && !sheetOpen)) return;
 
@@ -1987,6 +2073,7 @@
       "visibilitychange",
       handleVisibilityChange
     );
+    window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("resize", measureDeck);
     window.visualViewport?.addEventListener(
       "resize",
@@ -1995,6 +2082,7 @@
     measureDeck();
 
     return () => {
+      seenReporter.flushOnLeave();
       window.clearTimeout(meTimer);
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("popstate", handlePopState);
@@ -2002,6 +2090,7 @@
         "visibilitychange",
         handleVisibilityChange
       );
+      window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("resize", measureDeck);
       window.visualViewport?.removeEventListener(
         "resize",
@@ -2367,7 +2456,9 @@
   </p>
 
   <p class="other-items-slot" aria-live="polite">
-    {#if showingOtherItems}
+    {#if showingAllSeen}
+      <span>{ALL_SEEN_NOTE}</span>
+    {:else if showingOtherItems}
       <span>{OTHER_ITEMS_NOTE}</span>
     {/if}
     <span class="other-items-sizer" aria-hidden="true">

@@ -6,13 +6,17 @@
   let {
     initialItems = [],
     initialCursor = null,
+    initialPageCursor = null,
     initialMatched = true,
+    initialNotice = null,
     initialUser,
     initialPostNews = 0
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
+    initialPageCursor?: string | null;
     initialMatched?: boolean;
+    initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
   } = $props();
@@ -22,7 +26,9 @@
   <SwipeDeck
     {initialItems}
     {initialCursor}
+    {initialPageCursor}
     {initialMatched}
+    {initialNotice}
     {initialUser}
     {initialPostNews}
   />
