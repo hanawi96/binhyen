@@ -1,0 +1,187 @@
+/**
+ * Cùng một bố cục gradient cho sáng & tối.
+ * Chỉ --atm-wash / --atm-a / --atm-b đổi theo preset (+ mode).
+ */
+
+@property --atm-wash {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e6eee6;
+}
+
+@property --atm-a {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #7d9a84;
+}
+
+@property --atm-b {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #d5e0c8;
+}
+
+.atmosphere {
+  --atm-wash: #e6eee6;
+  --atm-a: #7d9a84;
+  --atm-b: #d5e0c8;
+  --atm-grain-opacity: 0.032;
+  --atm-morph: 1.2s;
+  --atm-morph-ease: cubic-bezier(0.4, 0.0, 0.2, 1);
+  --atm-orb-a: color-mix(in oklab, var(--atm-a) 28%, transparent);
+  --atm-orb-b: color-mix(in oklab, var(--atm-b) 48%, transparent);
+
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: paint;
+
+  background:
+    radial-gradient(
+      115% 75% at 12% 8%,
+      color-mix(in oklab, var(--atm-a) 32%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      95% 70% at 92% 88%,
+      color-mix(in oklab, var(--atm-b) 55%, transparent),
+      transparent 56%
+    ),
+    radial-gradient(
+      70% 50% at 50% 45%,
+      color-mix(in oklab, var(--atm-wash) 40%, transparent),
+      transparent 70%
+    ),
+    linear-gradient(
+      165deg,
+      color-mix(in oklab, var(--atm-wash) 82%, var(--color-background)) 0%,
+      color-mix(in oklab, var(--atm-wash) 28%, var(--color-background)) 48%,
+      var(--color-background) 100%
+    );
+
+  transition:
+    --atm-wash var(--atm-morph) var(--atm-morph-ease),
+    --atm-a var(--atm-morph) var(--atm-morph-ease),
+    --atm-b var(--atm-morph) var(--atm-morph-ease);
+}
+
+.atmosphere-orb {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--atm-orb-a),
+    transparent 68%
+  );
+}
+
+.atmosphere-orb--a {
+  width: min(72vw, 420px);
+  height: min(72vw, 420px);
+  top: -12%;
+  left: -8%;
+  animation: atm-drift-a 38s ease-in-out infinite alternate;
+}
+
+.atmosphere-orb--b {
+  width: min(64vw, 380px);
+  height: min(64vw, 380px);
+  right: -10%;
+  bottom: -14%;
+  background: radial-gradient(
+    circle at 60% 55%,
+    var(--atm-orb-b),
+    transparent 70%
+  );
+  animation: atm-drift-b 46s ease-in-out infinite alternate;
+}
+
+.atmosphere-deep {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.55s var(--atm-morph-ease);
+  background:
+    radial-gradient(
+      ellipse 70% 55% at 50% 38%,
+      color-mix(in oklab, var(--atm-wash) 40%, transparent),
+      transparent 68%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--atm-wash) 26%, transparent) 0%,
+      transparent 55%
+    );
+}
+
+.atmosphere.is-deep {
+  --atm-grain-opacity: 0.048;
+  --atm-orb-a: color-mix(in oklab, var(--atm-a) 34%, transparent);
+  --atm-orb-b: color-mix(in oklab, var(--atm-b) 58%, transparent);
+}
+
+.atmosphere.is-deep .atmosphere-deep {
+  opacity: 1;
+}
+
+.atmosphere-grain {
+  position: absolute;
+  inset: 0;
+  opacity: var(--atm-grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 180px 180px;
+  mix-blend-mode: multiply;
+  transition: opacity 0.55s var(--atm-morph-ease);
+  pointer-events: none;
+}
+
+/* Dark: cùng bố cục & tỉ lệ mix — chỉ grain blend khác vì nền tối. */
+html[data-theme="dark"] .atmosphere {
+  --atm-grain-opacity: 0.045;
+}
+
+html[data-theme="dark"] .atmosphere.is-deep {
+  --atm-grain-opacity: 0.06;
+}
+
+html[data-theme="dark"] .atmosphere-grain {
+  mix-blend-mode: soft-light;
+}
+
+@keyframes atm-drift-a {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(5%, 3%, 0) scale(1.05);
+  }
+}
+
+@keyframes atm-drift-b {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.03);
+  }
+  to {
+    transform: translate3d(-4%, -3%, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atmosphere {
+    --atm-morph: 0.01ms;
+  }
+
+  .atmosphere-orb {
+    animation: none !important;
+    will-change: auto;
+  }
+
+  .atmosphere-deep,
+  .atmosphere-grain {
+    transition-duration: 0.01ms;
+  }
+}

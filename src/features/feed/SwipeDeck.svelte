@@ -3,7 +3,14 @@
   import { onMount, untrack } from "svelte";
   import ContentCard from "./ContentCard.svelte";
   import { demoContents } from "../content/demo-contents";
-  import type { ContentItem } from "../content/content.types";
+  import { type ContentItem } from "../content/content.types";
+  import {
+    atmosphereStyle,
+    buildAtmosphereMap,
+    pickAtmosphereId,
+    type AtmosphereMode
+  } from "./atmosphere-presets";
+  import { readTheme } from "../theme/theme";
   import {
     createApiFeedSource,
     createCollectionFeedSource,
@@ -298,6 +305,23 @@
   let readFromMine = $state(false);
   let activeItem = $derived<ReadItem | null>(
     reading && readItem ? readItem : (contents[currentIndex] ?? null)
+  );
+
+  /** Map id → preset 0..29; hai thẻ liền nhau khác màu. */
+  const atmosphereMap = $derived(
+    buildAtmosphereMap(contents.map((item) => item.id))
+  );
+
+  const atmosphereId = $derived.by(() => {
+    const id = activeItem?.id;
+    if (!id) return 0;
+    return atmosphereMap.get(id) ?? pickAtmosphereId(id, -1);
+  });
+
+  /** Sáng/tối: cùng bố cục, chỉ đổi bộ màu preset. */
+  let atmosphereMode = $state<AtmosphereMode>("light");
+  const atmosphereCss = $derived(
+    atmosphereStyle(atmosphereId, atmosphereMode)
   );
 
   // So tren rail: giu so cu khi doi the / dang tai, roi truot sang so moi.
@@ -2229,6 +2253,14 @@
     if (history.state?.binhyenSheet) history.replaceState(null, "");
     // May chu khong doc duoc nguoi dung thi hoi lai, sau khi the dau da hien.
     const meTimer = userKnown ? 0 : window.setTimeout(ensureMe, 1200);
+    atmosphereMode = readTheme();
+    const themeObserver = new MutationObserver(() => {
+      atmosphereMode = readTheme();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    });
     document.addEventListener("keydown", handleEscape);
     window.addEventListener("popstate", handlePopState);
     document.addEventListener(
@@ -2246,6 +2278,7 @@
     return () => {
       seenReporter.flushOnLeave();
       window.clearTimeout(meTimer);
+      themeObserver.disconnect();
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("popstate", handlePopState);
       document.removeEventListener(
@@ -2274,6 +2307,19 @@
   class:is-reading={reading}
   class:is-reader-shown={readerShown}
 >
+  <div
+    class="atmosphere"
+    class:is-deep={reading}
+    data-atm={atmosphereId}
+    style={atmosphereCss}
+    aria-hidden="true"
+  >
+    <div class="atmosphere-orb atmosphere-orb--a"></div>
+    <div class="atmosphere-orb atmosphere-orb--b"></div>
+    <div class="atmosphere-deep"></div>
+    <div class="atmosphere-grain"></div>
+  </div>
+
   <header class="topbar" inert={reading || sheetOpen}>
     {#if collection}
       <div class="collection-bar">
