@@ -2,11 +2,12 @@
   import ThemeToggle from "../theme/ThemeToggle.svelte";
 
   interface Props {
-    current: "contents" | "catalog";
+    current: "contents" | "submissions" | "catalog";
     onleave: () => void;
+    pending?: number;
   }
 
-  let { current, onleave }: Props = $props();
+  let { current, onleave, pending = 0 }: Props = $props();
 </script>
 
 <aside class="sidebar">
@@ -20,6 +21,18 @@
       aria-current={current === "contents" ? "page" : undefined}
     >
       Quản lý nội dung
+    </a>
+    <a
+      href="/admin/submissions"
+      aria-current={current === "submissions" ? "page" : undefined}
+    >
+      Bài người dùng gửi
+      {#if pending > 0}
+        <span class="badge">
+          {pending > 99 ? "99+" : pending}
+          <span class="sr-only">bài chờ duyệt</span>
+        </span>
+      {/if}
     </a>
     <a
       href="/admin/catalog"
@@ -65,6 +78,34 @@
     padding: var(--space-3);
     border-radius: var(--radius-md);
     color: var(--color-text-secondary);
+  }
+
+  nav a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .badge {
+    min-width: 1.4rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font-size: 0.75rem;
+    font-weight: 650;
+    line-height: 1.4;
+    text-align: center;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   nav a[aria-current="page"] {

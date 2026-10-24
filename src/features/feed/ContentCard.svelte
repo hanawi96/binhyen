@@ -53,7 +53,7 @@
     width: 100%;
     height: 100%;
     min-height: 0;
-    padding: 8px 8px 16px;
+    padding: 8px 60px 16px;
     overflow: hidden;
     text-align: center;
     background: transparent;
@@ -143,7 +143,7 @@
     }
 
     .stage {
-      padding-bottom: 12px;
+      padding: 8px 52px 12px 12px;
     }
   }
 

@@ -5,7 +5,11 @@ export const prerender = false;
 import { env } from "cloudflare:workers";
 
 import type { ContentItem } from "../features/content/content.types";
+import { currentUser, type PublicUser } from "../features/account/account";
+import { createD1AccountStore } from "../features/account/d1-account-store";
+import { readSessionTopics } from "../features/account/d1-profile-store";
 import { loadPublicFeed } from "../features/feed/load-public-feed";
+import { createD1MyPostStore } from "../features/posts/d1-my-posts";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import ExploreFeed from "../features/feed/ExploreFeed.svelte";
 
@@ -14,13 +18,29 @@ const FIRST_PAGE_SIZE = 3;
 let initialItems: ContentItem[] = [];
 let initialCursor: string | null = null;
 let initialMatched = true;
+let initialUser: PublicUser | null | undefined;
+let initialPostNews = 0;
+
+const cookie = Astro.request.headers.get("cookie");
+const now = Math.floor(Date.now() / 1000);
 
 try {
+  initialUser = await currentUser(createD1AccountStore(env.DB), cookie, now);
+  if (initialUser) {
+    initialPostNews = await createD1MyPostStore(env.DB).news(initialUser.id);
+  }
+} catch (error) {
+  console.error("Homepage user error:", error);
+}
+
+try {
+  const favorites = await readSessionTopics(env.DB, cookie, now);
   const page = await loadPublicFeed(env.DB, {
     topic: "all",
     mood: "all",
     cursor: null,
-    limit: FIRST_PAGE_SIZE
+    limit: FIRST_PAGE_SIZE,
+    favorites
   });
 
   initialItems = page.items;
@@ -42,5 +62,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
     initialItems={initialItems}
     initialCursor={initialCursor}
     initialMatched={initialMatched}
+    initialUser={initialUser}
+    initialPostNews={initialPostNews}
   />
 </BaseLayout>

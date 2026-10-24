@@ -60,6 +60,7 @@
   --color-sheet: #fffcf5;
   --color-sheet-line: #e2e6dc;
   --color-sheet-shadow: rgba(49, 71, 58, 0.12);
+  --color-scrim: rgba(16, 22, 19, 0.38);
   --color-sheet-close: #6c7f6d;
   --color-sheet-close-line: #d8e0d5;
   --color-sheet-label: #89a089;
@@ -156,6 +157,7 @@ html[data-theme="dark"] {
   --color-toast: #31483c;
   --color-toast-text: #e8f0ea;
   --color-toast-shadow: rgba(0, 0, 0, 0.28);
+  --color-scrim: rgba(4, 7, 6, 0.6);
   --color-sheet: #24302b;
   --color-sheet-line: #3d4a43;
   --color-sheet-shadow: rgba(0, 0, 0, 0.28);

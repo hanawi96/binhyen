@@ -7,9 +7,10 @@
   interface Props {
     initialTopics: CatalogEntry[];
     initialMoods: CatalogEntry[];
+    pending: number;
   }
 
-  let { initialTopics, initialMoods }: Props = $props();
+  let { initialTopics, initialMoods, pending }: Props = $props();
 
   let topics = $state(initialTopics.map(copyEntry));
   let moods = $state(initialMoods.map(copyEntry));
@@ -289,7 +290,7 @@
 
 <div class="desk">
   <div class="shell">
-    <AdminNav current="catalog" onleave={leave} />
+    <AdminNav current="catalog" onleave={leave} {pending} />
     <main class="main">
       <header class="page-head">
         <div>

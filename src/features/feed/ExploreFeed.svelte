@@ -1,15 +1,20 @@
 <script lang="ts">
+  import type { AccountUser } from "../account/account-client";
   import type { ContentItem } from "../content/content.types";
   import SwipeDeck from "./SwipeDeck.svelte";
 
   let {
     initialItems = [],
     initialCursor = null,
-    initialMatched = true
+    initialMatched = true,
+    initialUser,
+    initialPostNews = 0
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
     initialMatched?: boolean;
+    initialUser?: AccountUser | null;
+    initialPostNews?: number;
   } = $props();
 </script>
 
@@ -18,6 +23,8 @@
     {initialItems}
     {initialCursor}
     {initialMatched}
+    {initialUser}
+    {initialPostNews}
   />
 </div>
 

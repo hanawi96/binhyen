@@ -139,6 +139,7 @@
     initialStats: AdminStats;
     initialTopics: AdminCatalogItem[];
     initialMoods: AdminCatalogItem[];
+    pending: number;
   }
 
   let {
@@ -147,7 +148,8 @@
     initialTotal,
     initialStats,
     initialTopics,
-    initialMoods
+    initialMoods,
+    pending
   }: Props = $props();
 
   let query = $state("");
@@ -934,7 +936,7 @@
 
 <div class="desk">
   <div class="shell">
-      <AdminNav current="contents" onleave={leave} />
+      <AdminNav current="contents" onleave={leave} {pending} />
 
       <main class="main">
         <header class="page-head">

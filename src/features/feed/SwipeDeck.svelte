@@ -13,8 +13,17 @@
     TopicFilter,
     MoodFilter
   } from "../content/filter-contents";
-  import { isMoodFilter, isTopicFilter } from "../content/filter-contents";
+  import { isTopicFilter } from "../content/filter-contents";
   import ThemeToggle from "../theme/ThemeToggle.svelte";
+  import {
+    invalidateMine,
+    prefetchMine,
+    type MineItem,
+    type MineKind,
+    type MineOpenable,
+    type MinePost
+  } from "../mine/mine-client";
+  import { fetchMe, type AccountUser } from "../account/account-client";
   import {
     readBlocks,
     splitSentences,
@@ -24,21 +33,24 @@
   let {
     initialItems = [],
     initialCursor = null,
-    initialMatched = true
+    initialMatched = true,
+    initialUser,
+    initialPostNews = 0
   }: {
     initialItems?: ContentItem[];
     initialCursor?: string | null;
     initialMatched?: boolean;
+    initialUser?: AccountUser | null;
+    initialPostNews?: number;
   } = $props();
 
   let selectedTopic = $state<TopicFilter>("all");
   let selectedMood = $state<MoodFilter>("all");
-  let chipMode = $state<"topic" | "mood">("topic");
-  let toast = $state("");
-  let toastTimer = 0;
+  type SectionKey = "for-you" | "loved" | Exclude<TopicFilter, "all">;
 
-  const topicChips: Array<{ key: TopicFilter; label: string }> = [
-    { key: "all", label: "Tất cả" },
+  const sections: Array<{ key: SectionKey; label: string }> = [
+    { key: "for-you", label: "Dành cho bạn" },
+    { key: "loved", label: "Yêu thích nhất" },
     { key: "peace", label: "Bình yên" },
     { key: "stories", label: "Câu chuyện" },
     { key: "science", label: "Khoa học" },
@@ -49,19 +61,9 @@
     { key: "tips", label: "Mẹo thú vị" }
   ];
 
-  const moodChips: Array<{ key: MoodFilter; label: string }> = [
-    { key: "all", label: "Tất cả" },
-    { key: "calm", label: "Bình yên" },
-    { key: "tired", label: "Mệt mỏi" },
-    { key: "stressed", label: "Căng thẳng" },
-    { key: "sad", label: "Buồn" },
-    { key: "happy", label: "Vui vẻ" },
-    { key: "curious", label: "Tò mò" }
-  ];
-
-  let activeChips = $derived(
-    chipMode === "topic" ? topicChips : moodChips
-  );
+  let selectedSection = $state<SectionKey>("for-you");
+  let lovedMode = $state(false);
+  let sectionBar = $state<HTMLElement | null>(null);
 
   // STEP12_FEED_BUFFER
   const PAGE_SIZE = 3;
@@ -131,14 +133,422 @@
     cute: "♡"
   };
 
+  // Thich / luu / chia se. Cookie an danh chi tao o lan bam dau tien.
+  type Reaction = {
+    liked: boolean;
+    saved: boolean;
+    likeCount: number;
+    saveCount: number;
+    shareCount: number;
+  };
+
+  const SHARED_FLASH_MS = 1400;
+  const EMPTY_REACTION: Reaction = {
+    liked: false,
+    saved: false,
+    likeCount: 0,
+    saveCount: 0,
+    shareCount: 0
+  };
+  const countFormat = new Intl.NumberFormat("vi-VN", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  });
+
+  let reactions = $state<Record<string, Reaction>>({});
+  let sharedId = $state<string | null>(null);
+  let shareTimer = 0;
+  let writeSerial = 0;
+  const lastWrite: Record<string, number> = {};
+  const reactionLoads = new Set<string>();
+  let reactionEpoch = 0;
+  // Ghi tuan tu de lan bam dau khong tao hai ma an danh.
+  let writeQueue: Promise<unknown> = Promise.resolve();
+
+  // Bai mo tu "Cua toi" khong nam trong bo the.
+  type ReadItem = Pick<
+    ContentItem,
+    "id" | "title" | "category" | "description" | "theme"
+  >;
+
+  let readItem = $state<ReadItem | null>(null);
+  let readFromMine = $state(false);
+  let activeItem = $derived<ReadItem | null>(
+    reading && readItem ? readItem : (contents[currentIndex] ?? null)
+  );
+
+  // Chua tai xong thi khong hien so, tranh nhay tu 0.
+  let activeReaction = $derived<Reaction | null>(
+    reactions[activeItem?.id ?? ""] ?? null
+  );
+
+  function formatCount(value: number | undefined): string {
+    return value === undefined ? "" : countFormat.format(value);
+  }
+
+  function readReaction(value: unknown): Reaction | null {
+    if (!value || typeof value !== "object") return null;
+
+    const { liked, saved, likeCount, saveCount, shareCount } =
+      value as Record<string, unknown>;
+
+    return typeof liked === "boolean" &&
+      typeof saved === "boolean" &&
+      typeof likeCount === "number" &&
+      typeof saveCount === "number" &&
+      typeof shareCount === "number"
+      ? { liked, saved, likeCount, saveCount, shareCount }
+      : null;
+  }
+
+  function sendInteraction(
+    id: string,
+    path: "reactions" | "shares",
+    body: Record<string, unknown>
+  ): Promise<Reaction | null> {
+    const run = async () => {
+      const response = await fetch(
+        `/api/contents/${encodeURIComponent(id)}/${path}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }
+      );
+
+      if (!response.ok) return null;
+
+      return readReaction(await response.json());
+    };
+
+    const result = writeQueue.then(run).catch(() => null);
+    writeQueue = result;
+    return result;
+  }
+
+  function toggleReaction(kind: "like" | "save") {
+    const item = activeItem;
+    if (!item) return;
+
+    const before = reactions[item.id];
+    const on = kind === "like" ? !before?.liked : !before?.saved;
+    void setReaction(item.id, kind, on);
+  }
+
+  // Danh sach "Cua toi" biet chac trang thai cu khi chua tai so dem.
+  async function setReaction(
+    id: string,
+    kind: "like" | "save",
+    on: boolean
+  ) {
+    const before =
+      reactions[id] ??
+      (kind === "like"
+        ? { ...EMPTY_REACTION, liked: !on }
+        : { ...EMPTY_REACTION, saved: !on });
+    const set = (value: boolean): Reaction => {
+      const now = reactions[id] ?? before;
+      const step = value ? 1 : -1;
+
+      return kind === "like"
+        ? now.liked === value
+          ? now
+          : {
+              ...now,
+              liked: value,
+              likeCount: Math.max(0, now.likeCount + step)
+            }
+        : now.saved === value
+          ? now
+          : {
+              ...now,
+              saved: value,
+              saveCount: Math.max(0, now.saveCount + step)
+            };
+    };
+
+    reactions[id] = set(on);
+
+    const serial = ++writeSerial;
+    lastWrite[id] = serial;
+
+    const state = await sendInteraction(id, "reactions", { kind, on });
+    if (state) invalidateMine();
+    if (lastWrite[id] !== serial) return;
+
+    reactions[id] = state ?? set(!on);
+  }
+
+  async function shareCurrent() {
+    const item = activeItem;
+    if (!item) return;
+
+    const url = `${window.location.origin}/`;
+    let channel: "native" | "copy_link";
+
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: item.title, url });
+        channel = "native";
+      } else {
+        await navigator.clipboard.writeText(`${item.title}\n${url}`);
+        channel = "copy_link";
+      }
+    } catch {
+      // Nguoi dung huy hoac trinh duyet chan: khong tinh luot.
+      return;
+    }
+
+    sharedId = item.id;
+    window.clearTimeout(shareTimer);
+    shareTimer = window.setTimeout(() => {
+      sharedId = null;
+    }, SHARED_FLASH_MS);
+
+    const id = item.id;
+    const now = reactions[id];
+    if (now) reactions[id] = { ...now, shareCount: now.shareCount + 1 };
+
+    const serial = ++writeSerial;
+    lastWrite[id] = serial;
+
+    const state = await sendInteraction(id, "shares", { channel });
+    if (state && lastWrite[id] === serial) reactions[id] = state;
+  }
+
+  // "Cua toi": tai code va trang dau khi vua cham nut, truoc khi ngan mo.
+  type MineSheetComponent =
+    typeof import("../mine/MineSheet.svelte").default;
+
+  type AccountSheetComponent =
+    typeof import("../account/AccountSheet.svelte").default;
+
+  type WriteSheetComponent =
+    typeof import("../write/WriteSheet.svelte").default;
+
+  let MineSheet = $state<MineSheetComponent | null>(null);
+  let AccountSheet = $state<AccountSheetComponent | null>(null);
+  let WriteSheet = $state<WriteSheetComponent | null>(null);
+  let mineOpen = $state(false);
+  let accountOpen = $state(false);
+  let writeOpen = $state(false);
+  let mineTab = $state<"post" | null>(null);
+  let writeEdit = $state<{ id: string; serial: number } | null>(null);
+  let editSerial = 0;
+  let postsVersion = $state(0);
+  let mineCode: Promise<void> | null = null;
+  let accountCode: Promise<void> | null = null;
+  let writeCode: Promise<void> | null = null;
+  const writeTopics = sections.filter(
+    (section) => section.key !== "for-you" && section.key !== "loved"
+  );
+  let user = $state<AccountUser | null>(initialUser ?? null);
+  let userKnown = $state(initialUser !== undefined);
+  // So bai vua duoc duyet / tu choi ma nguoi viet chua mo "Da viet".
+  let postNews = $state(initialPostNews);
+  let meLoad: Promise<void> | null = null;
+  let sheetOpen = $derived(mineOpen || accountOpen || writeOpen);
+  let userInitial = $derived(
+    (user?.displayName.trim().charAt(0) || "·").toLocaleUpperCase("vi")
+  );
+
+  function ensureMe() {
+    if (userKnown) return;
+    meLoad ??= fetchMe()
+      .then((value) => {
+        user = value.user;
+        postNews = value.postNews;
+        userKnown = true;
+      })
+      .catch(() => {
+        meLoad = null;
+      });
+  }
+
+  function warmMine() {
+    ensureMe();
+    void prefetchMine("like");
+    mineCode ??= import("../mine/MineSheet.svelte")
+      .then((module) => {
+        MineSheet = module.default;
+      })
+      .catch(() => {
+        mineCode = null;
+      });
+  }
+
+  function warmAccount() {
+    ensureMe();
+    accountCode ??= import("../account/AccountSheet.svelte")
+      .then((module) => {
+        AccountSheet = module.default;
+      })
+      .catch(() => {
+        accountCode = null;
+      });
+  }
+
+  function warmWrite() {
+    ensureMe();
+    writeCode ??= import("../write/WriteSheet.svelte")
+      .then((module) => {
+        WriteSheet = module.default;
+      })
+      .catch(() => {
+        writeCode = null;
+      });
+  }
+
+  // Moi ngan chiem mot muc lich su de nut Back dong ngan.
+  function showSheet(which: "mine" | "account" | "write") {
+    const replace = sheetOpen;
+    mineOpen = which === "mine";
+    accountOpen = which === "account";
+    writeOpen = which === "write";
+
+    if (replace && history.state?.binhyenSheet) {
+      history.replaceState({ binhyenSheet: true }, "");
+    } else {
+      history.pushState({ binhyenSheet: true }, "");
+    }
+  }
+
+  async function showMine(tab: "post" | null) {
+    if (mineOpen || reading) return;
+
+    mineTab = tab;
+    warmMine();
+    await mineCode;
+    if (!MineSheet || mineOpen) return;
+
+    showSheet("mine");
+  }
+
+  function openMine() {
+    void showMine(postNews > 0 ? "post" : null);
+  }
+
+  function openMinePosts() {
+    void showMine("post");
+  }
+
+  async function openAccount() {
+    if (accountOpen || reading) return;
+
+    warmAccount();
+    await accountCode;
+    if (!AccountSheet || accountOpen) return;
+
+    showSheet("account");
+  }
+
+  async function showWrite(edit: { id: string; serial: number } | null) {
+    if (writeOpen || reading) return;
+
+    warmWrite();
+    await writeCode;
+    if (!WriteSheet || writeOpen) return;
+
+    writeEdit = edit;
+    showSheet("write");
+  }
+
+  function openWrite() {
+    void showWrite(null);
+  }
+
+  function editPost(item: MinePost) {
+    editSerial += 1;
+    void showWrite({ id: item.id, serial: editSerial });
+  }
+
+  function closeSheet() {
+    if (!sheetOpen) return;
+
+    if (history.state?.binhyenSheet) {
+      history.back();
+    } else {
+      mineOpen = false;
+      accountOpen = false;
+      writeOpen = false;
+    }
+  }
+
+  // Doi nguoi dung thi trang thai thich / luu cu khong con dung.
+  function resetReactions() {
+    reactionEpoch += 1;
+    reactions = {};
+    for (const id of Object.keys(lastWrite)) delete lastWrite[id];
+    reactionLoads.clear();
+    invalidateMine();
+  }
+
+  function onSignedIn(next: AccountUser) {
+    user = next;
+    userKnown = true;
+    postNews = 0;
+    resetReactions();
+    refreshForYou();
+    void fetchMe()
+      .then((value) => {
+        if (value.user?.id === user?.id) postNews = value.postNews;
+      })
+      .catch(() => {});
+  }
+
+  function onSignedOut() {
+    user = null;
+    userKnown = true;
+    postNews = 0;
+    resetReactions();
+    refreshForYou();
+  }
+
+  function onProfileSaved(next: AccountUser, topicsChanged: boolean) {
+    user = next;
+    if (topicsChanged) refreshForYou();
+  }
+
+  function openMineItem(item: MineOpenable) {
+    openReading(item, true);
+  }
+
+  function setMineReaction(item: MineItem, kind: MineKind, on: boolean) {
+    void setReaction(item.id, kind, on);
+  }
+
+  // Doi the dung yen mot chut moi tai, luot nhanh khong goi API.
+  $effect(() => {
+    const id = activeItem?.id;
+
+    if (!id || reactions[id] || reactionLoads.has(id)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const epoch = reactionEpoch;
+      reactionLoads.add(id);
+
+      fetch(`/api/contents/${encodeURIComponent(id)}/reactions`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body: unknown) => {
+          if (epoch !== reactionEpoch) return;
+          const state = readReaction(body);
+          if (state && !(id in lastWrite)) reactions[id] = state;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (epoch === reactionEpoch) reactionLoads.delete(id);
+        });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  });
+
   // STEP11_SESSION_HISTORY
   const seenIds = new Set<string>();
   let seenCount = $state(0);
   let pageVisible = $state(true);
-
-  // Luu trang thai theo ID, khong theo component.
-  let savedById = $state<Record<string, boolean>>({});
-
   // Chi render toi da 3 the.
   let visibleIndexes = $derived(
     [currentIndex - 1, currentIndex, currentIndex + 1]
@@ -161,6 +571,35 @@
     filtered && !directMatch && contents.length > 0 && !loadError
   );
   let showWaiting = $state(false);
+  let emptyCopy = $derived(
+    loadError
+      ? {
+          title: "Không tải được nội dung",
+          text: loadError,
+          label: "Thử tải lại",
+          action: retryLoad
+        }
+      : lovedMode
+        ? {
+            title: "Chưa có bài nào được yêu thích",
+            text: "Chạm ♡ ở một bài để bài ấy xuất hiện ở đây.",
+            label: "Xem Dành cho bạn",
+            action: showAll
+          }
+        : filtered && !directMatch
+          ? {
+              title: "Chưa có nội dung cho lựa chọn này",
+              text: "Hãy thử một chủ đề khác.",
+              label: "Xem tất cả",
+              action: showAll
+            }
+          : {
+              title: "Chưa có nội dung",
+              text: "Những điều đẹp đẽ sẽ xuất hiện khi có bài mới.",
+              label: "Thử lại",
+              action: restartSession
+            }
+  );
 
   $effect(() => {
     const pending =
@@ -411,10 +850,15 @@
       }
 
       if (replaceOnLoad) {
-        contents = page.items;
-        currentIndex = 0;
         replaceOnLoad = false;
-        setOffset(0);
+
+        if (topicFading) {
+          swapAfterFade(page.items);
+        } else {
+          contents = page.items;
+          currentIndex = 0;
+          setOffset(0);
+        }
       } else {
         const loadedIds = new Set(
           contents.map((item) => item.id)
@@ -443,6 +887,7 @@
       }
 
       loadError = loadErrorMessage(error);
+      endTopicFade();
     } finally {
       if (serial === loadSerial && expectedVersion === feedVersion) {
         loading = false;
@@ -459,11 +904,17 @@
   }
   function applyFilters(
     topic: TopicFilter,
-    mood: MoodFilter
+    mood: MoodFilter,
+    loved = false
   ) {
     if (dragging || animating) return;
 
-    const newSource = createApiFeedSource(topic, mood);
+    const newSource = createApiFeedSource(
+      topic,
+      mood,
+      loved ? { section: "loved" } : {}
+    );
+    lovedMode = loved;
 
     const firstPage = newSource.firstPage(PAGE_SIZE);
 
@@ -484,16 +935,33 @@
     replaceOnLoad = true;
 
     setOffset(0);
+    if (contents.length > 0) startTopicFade();
     void loadMore();
   }
 
+  function centerSection(key: SectionKey) {
+    const button = sectionBar?.querySelector<HTMLElement>(
+      `[data-section="${key}"]`
+    );
+    if (!sectionBar || !button) return;
+
+    sectionBar.scrollTo({
+      left:
+        button.offsetLeft -
+        (sectionBar.clientWidth - button.offsetWidth) / 2,
+      behavior: "smooth"
+    });
+  }
+
   function showAll() {
+    selectedSection = "for-you";
+    centerSection("for-you");
     applyFilters("all", "all");
   }
 
-  function chooseTopic(value: string) {
+  function chooseSection(key: SectionKey) {
     if (
-      !isTopicFilter(value) ||
+      key === selectedSection ||
       dragging ||
       animating ||
       replaceOnLoad
@@ -501,37 +969,93 @@
       return;
     }
 
-    applyFilters(value, selectedMood);
+    selectedSection = key;
+    centerSection(key);
+    applyFilters(
+      isTopicFilter(key) ? key : "all",
+      "all",
+      key === "loved"
+    );
   }
 
-  function chooseMood(value: string) {
-    if (
-      !isMoodFilter(value) ||
-      dragging ||
-      animating ||
-      replaceOnLoad
-    ) {
-      return;
+  function sectionScroll(node: HTMLElement) {
+    let pointerId = -1;
+    let startX = 0;
+    let startScroll = 0;
+    let moved = false;
+
+    function onWheel(event: WheelEvent) {
+      if (
+        Math.abs(event.deltaY) <= Math.abs(event.deltaX) ||
+        node.scrollWidth <= node.clientWidth
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      node.scrollLeft += event.deltaY;
     }
 
-    applyFilters(selectedTopic, value);
-  }
+    // Trình duyệt không cuộn khung tràn khi kéo bằng chuột, chỉ khi vuốt tay.
+    function onPointerDown(event: PointerEvent) {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
 
-  function showToast(message: string) {
-    toast = message;
-    window.clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => {
-      toast = "";
-    }, 2200);
-  }
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startScroll = node.scrollLeft;
+      moved = false;
+    }
 
-  function toggleSave() {
-    const item = contents[currentIndex];
-    if (!item || dragging || animating) return;
+    function onPointerMove(event: PointerEvent) {
+      if (event.pointerId !== pointerId) return;
 
-    const next = !savedById[item.id];
-    savedById[item.id] = next;
-    showToast(next ? "Đã lưu nội dung." : "Đã bỏ lưu nội dung.");
+      const distance = event.clientX - startX;
+
+      if (!moved) {
+        if (Math.abs(distance) < 6) return;
+        moved = true;
+        node.setPointerCapture(pointerId);
+        node.classList.add("dragging");
+      }
+
+      node.scrollLeft = startScroll - distance;
+    }
+
+    function onPointerEnd(event: PointerEvent) {
+      if (event.pointerId !== pointerId) return;
+
+      pointerId = -1;
+      node.classList.remove("dragging");
+      if (node.hasPointerCapture(event.pointerId)) {
+        node.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    function onClick(event: MouseEvent) {
+      if (!moved) return;
+
+      moved = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    node.addEventListener("wheel", onWheel, { passive: false });
+    node.addEventListener("pointerdown", onPointerDown);
+    node.addEventListener("pointermove", onPointerMove);
+    node.addEventListener("pointerup", onPointerEnd);
+    node.addEventListener("pointercancel", onPointerEnd);
+    node.addEventListener("click", onClick, true);
+
+    return {
+      destroy() {
+        node.removeEventListener("wheel", onWheel);
+        node.removeEventListener("pointerdown", onPointerDown);
+        node.removeEventListener("pointermove", onPointerMove);
+        node.removeEventListener("pointerup", onPointerEnd);
+        node.removeEventListener("pointercancel", onPointerEnd);
+        node.removeEventListener("click", onClick, true);
+      }
+    };
   }
 
   let lastWheel = 0;
@@ -543,12 +1067,69 @@
   const READING_MS = 200;
   const WHEEL_COOLDOWN_MS = 580;
 
+  let topicFading = false;
+  let fadeOutUntil = 0;
+  let pendingItems: ContentItem[] | null = null;
+
   function cancelFade() {
     fadeSerial += 1;
     window.clearTimeout(readingTimer);
     readingTimer = 0;
     readingOut = false;
     fadeSwap = false;
+    topicFading = false;
+
+    if (pendingItems) {
+      contents = pendingItems;
+      currentIndex = 0;
+      pendingItems = null;
+      setOffset(0);
+    }
+  }
+
+  function startTopicFade() {
+    fadeSerial += 1;
+    window.clearTimeout(readingTimer);
+    animating = true;
+    topicFading = true;
+    fadeSwap = true;
+    readingOut = true;
+    fadeOutUntil = performance.now() + READING_MS;
+  }
+
+  function endTopicFade() {
+    if (!topicFading) return;
+
+    cancelFade();
+    animating = false;
+  }
+
+  // Bài cũ mờ hết rồi mới thay, bài mới hiện lên như khi lăn chuột.
+  function swapAfterFade(items: ContentItem[]) {
+    const serial = fadeSerial;
+    pendingItems = items;
+
+    readingTimer = window.setTimeout(() => {
+      if (serial !== fadeSerial) return;
+
+      contents = items;
+      currentIndex = 0;
+      pendingItems = null;
+      setOffset(0);
+
+      readingTimer = window.setTimeout(() => {
+        if (serial !== fadeSerial) return;
+
+        readingOut = false;
+        readingTimer = window.setTimeout(() => {
+          if (serial !== fadeSerial) return;
+
+          fadeSwap = false;
+          topicFading = false;
+          animating = false;
+        }, READING_MS);
+      }, 32);
+    }, Math.max(0, fadeOutUntil - performance.now()));
   }
 
   function fadeMove(direction: 1 | -1) {
@@ -611,12 +1192,15 @@
       room <= 1 ? 100 : (readScroll.scrollTop / room) * 100;
   }
 
-  function openReading() {
-    const item = contents[currentIndex];
-    if (!item || reading || animating || dragging || replaceOnLoad) return;
+  function openReading(target?: ReadItem, fromMine = false) {
+    const item = target ?? contents[currentIndex];
+    if (!item || reading) return;
+    if (!fromMine && (animating || dragging || replaceOnLoad)) return;
 
     window.clearTimeout(closeTimer);
     const serial = ++readSerial;
+    readItem = item;
+    readFromMine = fromMine;
     articleBlocks = [];
     articleReady = false;
     articleError = "";
@@ -678,6 +1262,8 @@
     window.clearTimeout(closeTimer);
     closeTimer = window.setTimeout(() => {
       reading = false;
+      readItem = null;
+      readFromMine = false;
       articleBlocks = [];
       articleReady = false;
       articleError = "";
@@ -686,7 +1272,7 @@
   }
 
   function readNext() {
-    if (!canNext || animating) return;
+    if (!canNext || animating || readFromMine) return;
 
     const nextIndex = currentIndex + 1;
     readerShown = false;
@@ -696,6 +1282,7 @@
       setOffset(0);
       currentIndex = nextIndex;
       reading = false;
+      readItem = null;
       articleBlocks = [];
       articleReady = false;
       articleError = "";
@@ -740,6 +1327,20 @@
     fadeMove(event.deltaY > 0 ? 1 : -1);
   }
 
+  // Chu de yeu thich doi thi "Danh cho ban" xep lai tu dau.
+  function refreshForYou() {
+    if (
+      selectedSection !== "for-you" ||
+      selectedTopic !== "all" ||
+      selectedMood !== "all" ||
+      lovedMode
+    ) {
+      return;
+    }
+
+    applyFilters("all", "all");
+  }
+
   // Xem lai tu dau, giu chu de va tam trang dang chon.
   function restartSession() {
     if (dragging || animating) return;
@@ -747,7 +1348,7 @@
     seenIds.clear();
     seenCount = 0;
 
-    applyFilters(selectedTopic, selectedMood);
+    applyFilters(selectedTopic, selectedMood, lovedMode);
   }
   function navigate(direction: 1 | -1) {
     if (dragging || animating || replaceOnLoad) return;
@@ -995,13 +1596,24 @@
     }
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key !== "Escape" || !reading) return;
+      if (event.key !== "Escape" || (!reading && !sheetOpen)) return;
 
       event.preventDefault();
-      closeReading();
+      if (reading) closeReading();
+      else closeSheet();
     }
 
+    function handlePopState() {
+      mineOpen = false;
+      accountOpen = false;
+      writeOpen = false;
+    }
+
+    if (history.state?.binhyenSheet) history.replaceState(null, "");
+    // May chu khong doc duoc nguoi dung thi hoi lai, sau khi the dau da hien.
+    const meTimer = userKnown ? 0 : window.setTimeout(ensureMe, 1200);
     document.addEventListener("keydown", handleEscape);
+    window.addEventListener("popstate", handlePopState);
     document.addEventListener(
       "visibilitychange",
       handleVisibilityChange
@@ -1014,7 +1626,9 @@
     measureDeck();
 
     return () => {
+      window.clearTimeout(meTimer);
       document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("popstate", handlePopState);
       document.removeEventListener(
         "visibilitychange",
         handleVisibilityChange
@@ -1028,7 +1642,6 @@
       cancelDragFrame();
       clearTransitionTasks();
       cancelLoad();
-      window.clearTimeout(toastTimer);
       cancelFade();
       window.clearTimeout(closeTimer);
     };
@@ -1036,35 +1649,33 @@
 </script>
 
 <div class="swipe-deck" class:is-reading={reading}>
-  <header class="topbar">
-    <a class="brand" href="/" aria-label="Bình Yên - Trang chủ" inert={reading}>
-      <span aria-hidden="true">✳</span> Bình Yên
-    </a>
-    <div class="top-actions" inert={reading}>
-      <button
-        type="button"
-        class="text-btn"
-        aria-pressed={chipMode === "topic"}
-        onclick={() => (chipMode = "topic")}
-      >
-        Chủ đề
-      </button>
-      <button
-        type="button"
-        class="pill-btn"
-        aria-pressed={chipMode === "mood"}
-        onclick={() => (chipMode = "mood")}
-      >
-        ♡ Tâm trạng
-      </button>
-      <ThemeToggle />
-    </div>
+  <header class="topbar" inert={reading || sheetOpen}>
+    <nav
+      class="sections"
+      aria-label="Mục nội dung"
+      bind:this={sectionBar}
+      use:sectionScroll
+    >
+      {#each sections as section (section.key)}
+        <button
+          type="button"
+          class="section"
+          class:active={section.key === selectedSection}
+          aria-pressed={section.key === selectedSection}
+          data-section={section.key}
+          onclick={() => chooseSection(section.key)}
+        >
+          {section.label}
+        </button>
+      {/each}
+    </nav>
+    <ThemeToggle />
   </header>
   <div
     class="deck-viewport"
     class:dragging={dragging}
     class:fade-swap={fadeSwap}
-    inert={reading}
+    inert={reading || sheetOpen}
     bind:this={deckElement}
     tabindex="0"
     role="region"
@@ -1111,112 +1722,139 @@
       <div class="empty-state" role="status">
         <span class="empty-icon" aria-hidden="true">✳</span>
 
-        <h3>
-          {loadError
-            ? "Không tải được nội dung"
-            : filtered && !directMatch
-              ? "Chưa có nội dung cho lựa chọn này"
-              : "Chưa có nội dung"}
-        </h3>
-
-        <p>
-          {loadError
-            ? loadError
-            : filtered && !directMatch
-              ? "Hãy thử một chủ đề hoặc tâm trạng khác."
-              : "Những điều đẹp đẽ sẽ xuất hiện khi có bài mới."}
-        </p>
-
-        <button
-          type="button"
-          onclick={loadError
-            ? retryLoad
-            : filtered && !directMatch
-              ? showAll
-              : restartSession}
-        >
-          {loadError
-            ? "Thử tải lại"
-            : filtered && !directMatch
-              ? "Xem tất cả"
-              : "Thử lại"}
+        <h3>{emptyCopy.title}</h3>
+        <p>{emptyCopy.text}</p>
+        <button type="button" onclick={emptyCopy.action}>
+          {emptyCopy.label}
         </button>
       </div>
     {/if}
   </div>
 
-  <div class="chips-wrap" inert={reading}>
-    <div class="chips" aria-label={chipMode === "topic" ? "Chủ đề" : "Tâm trạng"}>
-      {#each activeChips as chip (chip.key)}
-        <button
-          type="button"
-          class="chip"
-          class:active={
-            chipMode === "topic"
-              ? chip.key === selectedTopic
-              : chip.key === selectedMood
-          }
-          onclick={() =>
-            chipMode === "topic"
-              ? chooseTopic(chip.key)
-              : chooseMood(chip.key)}
-        >
-          {chip.label}
-        </button>
-      {/each}
-    </div>
-  </div>
-
-  <footer class="bottom" inert={reading}>
-    <div class="left-tools">
+  <footer class="bottom" inert={reading || sheetOpen}>
+    <nav class="dock" aria-label="Điều hướng chính">
       <button
         type="button"
-        class="circle-btn"
-        onclick={() => navigate(-1)}
-        disabled={!canPrevious}
-        aria-label="Xem nội dung trước"
+        class="dock-item"
+        aria-haspopup="dialog"
+        aria-expanded={mineOpen}
+        aria-label={postNews > 0 ? "Của tôi, có kết quả duyệt bài mới" : undefined}
+        onpointerdown={warmMine}
+        onclick={openMine}
       >
-        ↑
+        <span class="dock-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="7" width="16" height="13" rx="2.5" />
+            <path d="M7 4h10M9 11.5h6" />
+          </svg>
+          {#if postNews > 0}
+            <span class="dock-dot" aria-hidden="true"></span>
+          {/if}
+        </span>
+        <span>Của tôi</span>
       </button>
       <button
         type="button"
-        class="circle-btn"
-        class:saved={Boolean(contents[currentIndex] && savedById[contents[currentIndex].id])}
-        aria-pressed={Boolean(contents[currentIndex] && savedById[contents[currentIndex].id])}
-        aria-label={
-          contents[currentIndex] && savedById[contents[currentIndex].id]
-            ? "Bỏ lưu nội dung"
-            : "Lưu nội dung"
-        }
-        disabled={!contents[currentIndex]}
-        onclick={toggleSave}
+        class="dock-write"
+        aria-label="Viết nội dung"
+        aria-haspopup="dialog"
+        aria-expanded={writeOpen}
+        onpointerdown={warmWrite}
+        onclick={openWrite}
       >
-        {contents[currentIndex] && savedById[contents[currentIndex].id] ? "♥" : "♡"}
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
       </button>
-    </div>
-
-    <div class="next-zone">
-      <span>CUỘN ĐỂ KHÁM PHÁ</span>
+      <button type="button" class="dock-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="6" cy="18" r="2" />
+          <circle cx="18" cy="6" r="2" />
+          <path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16" />
+        </svg>
+        <span>Hành trình</span>
+      </button>
       <button
         type="button"
-        onclick={() => navigate(1)}
-        disabled={!canNext}
-        aria-label="Nội dung tiếp theo"
+        class="dock-item dock-account"
+        aria-label={user ? `Tài khoản: ${user.displayName}` : "Tài khoản"}
+        aria-haspopup="dialog"
+        aria-expanded={accountOpen}
+        onpointerdown={warmAccount}
+        onclick={openAccount}
       >
-        ↓
+        {#if user}
+          <span class="dock-avatar" aria-hidden="true">{userInitial}</span>
+        {:else}
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="8.5" r="3.5" />
+            <path d="M5 19.5c1.4-3.2 4-4.8 7-4.8s5.6 1.6 7 4.8" />
+          </svg>
+        {/if}
+        <span>Tài khoản</span>
       </button>
-    </div>
-
-    <div class="right-tools">
-      <p class="counter" aria-live="polite" aria-atomic="true">
-        <strong>{String(contents.length ? currentIndex + 1 : 0).padStart(2, "0")}</strong>
-        / {String(contents.length).padStart(2, "0")}
-      </p>
-    </div>
+    </nav>
   </footer>
 
-  {#if reading && contents[currentIndex]}
-    {@const item = contents[currentIndex]}
+  {#if activeItem}
+    <div class="read-rail" inert={sheetOpen && !reading}>
+      <div class="rail-item">
+        <button
+          type="button"
+          class="read-icon"
+          class:active={activeReaction?.liked}
+          aria-label="Yêu thích"
+          aria-pressed={activeReaction?.liked ?? false}
+          onclick={() => toggleReaction("like")}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
+          </svg>
+        </button>
+        <span class="rail-count">
+          {formatCount(activeReaction?.likeCount)}
+        </span>
+      </div>
+      <div class="rail-item">
+        <button
+          type="button"
+          class="read-icon"
+          class:active={activeReaction?.saved}
+          aria-label="Lưu"
+          aria-pressed={activeReaction?.saved ?? false}
+          onclick={() => toggleReaction("save")}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
+          </svg>
+        </button>
+        <span class="rail-count">
+          {formatCount(activeReaction?.saveCount)}
+        </span>
+      </div>
+      <div class="rail-item">
+        <button
+          type="button"
+          class="read-icon read-share"
+          class:active={sharedId === activeItem.id}
+          aria-label={sharedId === activeItem.id
+            ? "Đã chia sẻ"
+            : "Chia sẻ"}
+          onclick={shareCurrent}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
+          </svg>
+        </button>
+        <span class="rail-count">
+          {formatCount(activeReaction?.shareCount)}
+        </span>
+      </div>
+    </div>
+  {/if}
+
+  {#if reading && readItem}
+    {@const item = readItem}
     <div class="read-actions" class:shown={readerShown}>
       <button
         type="button"
@@ -1232,7 +1870,7 @@
         type="button"
         class="read-icon"
         onclick={readNext}
-        disabled={!canNext}
+        disabled={!canNext || readFromMine}
         aria-label="Bài kế"
       >
         <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -1357,7 +1995,49 @@
     </p>
   {/if}
 
-  <p class="toast" role="status" hidden={!toast}>{toast}</p>
+  {#if MineSheet}
+    <MineSheet
+      open={mineOpen}
+      {reading}
+      signedIn={user !== null}
+      {postsVersion}
+      {postNews}
+      onPostsSeen={() => (postNews = 0)}
+      startTab={mineTab}
+      {reactions}
+      onClose={closeSheet}
+      onOpenItem={openMineItem}
+      onSetReaction={setMineReaction}
+      onEditPost={editPost}
+    />
+  {/if}
+
+  {#if WriteSheet}
+    <WriteSheet
+      open={writeOpen}
+      userId={user?.id ?? null}
+      {userKnown}
+      topics={writeTopics}
+      edit={writeEdit}
+      onClose={closeSheet}
+      onSignIn={openAccount}
+      onSaved={() => (postsVersion += 1)}
+      onOpenPosts={openMinePosts}
+    />
+  {/if}
+
+  {#if AccountSheet}
+    <AccountSheet
+      open={accountOpen}
+      {user}
+      {userKnown}
+      onClose={closeSheet}
+      {onSignedIn}
+      {onSignedOut}
+      onOpenMine={openMine}
+      {onProfileSaved}
+    />
+  {/if}
 </div>
 
 <style>
@@ -1532,10 +2212,6 @@
     .bottom {
       padding-top: 8px;
       padding-bottom: 10px;
-    }
-
-    .chips-wrap {
-      margin-bottom: 2px;
     }
   }
   /* STEP 9: CONTENT FILTERS */
@@ -1889,62 +2565,62 @@
   .topbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
     flex: 0 0 auto;
-    padding: 24px 30px 0;
+    min-width: 0;
+    padding: 20px 30px 0 18px;
   }
 
-  .brand {
-    color: var(--color-text);
-    font-family: var(--font-editorial);
-    font-size: 25px;
-    letter-spacing: -0.04em;
-    white-space: nowrap;
-  }
-
-  .brand span {
-    color: var(--color-brand-mark);
-  }
-
-  .top-actions {
+  .sections {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex: 1 1 auto;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    user-select: none;
+    -webkit-user-select: none;
+    mask-image: linear-gradient(
+      90deg,
+      transparent 0,
+      #000 8px,
+      #000 calc(100% - 22px),
+      transparent 100%
+    );
   }
 
-  .text-btn,
-  .pill-btn,
-  .chip,
-  .circle-btn,
-  .next-zone button {
+  .sections::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sections:global(.dragging) {
+    cursor: grabbing;
+  }
+
+  .section,
+  .dock button {
     font: inherit;
   }
 
-  .text-btn {
+  .section {
+    flex: none;
     padding: 10px 12px;
     border: 0;
     background: transparent;
     color: var(--color-quiet);
-    font-size: 12px;
+    font-size: 13px;
+    white-space: nowrap;
+    text-decoration: underline 1px transparent;
+    text-underline-offset: 8px;
   }
 
-  .text-btn[aria-pressed="true"] {
-    color: var(--color-primary);
-  }
-
-  .pill-btn {
-    padding: 10px 14px;
-    border: 1px solid var(--color-line);
-    border-radius: var(--radius-full);
-    background: var(--color-glass);
-    color: var(--color-primary);
-    font-size: 12px;
-  }
-
-  .pill-btn[aria-pressed="true"] {
-    background: var(--color-chip-active-bg);
-    border-color: var(--color-chip-active-line);
+  .section.active {
+    color: var(--color-text);
+    font-weight: 650;
+    text-decoration-color: currentColor;
   }
 
   .deck-viewport {
@@ -1960,125 +2636,105 @@
     background: transparent;
   }
 
-  .chips-wrap {
-    position: relative;
-    z-index: 2;
-    flex: 0 0 auto;
-    width: min(760px, calc(100% - 32px));
-    min-width: 0;
-    max-width: 100%;
-    margin: 0 auto 8px;
-    pointer-events: none;
-  }
-
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    min-width: 0;
-    pointer-events: auto;
-  }
-
-  .chip {
-    max-width: 100%;
-    padding: 9px 13px;
-    border: 1px solid var(--color-line);
-    border-radius: var(--radius-full);
-    background: var(--color-glass-soft);
-    color: var(--color-chip);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  .chip.active {
-    border-color: var(--color-chip-active-line);
-    background: var(--color-chip-active-bg);
-    color: var(--color-chip-active);
-  }
-
-  .chip:disabled {
-    cursor: progress;
-    opacity: 0.6;
-  }
-
   .bottom {
     position: relative;
     z-index: 2;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: end;
-    gap: 10px;
     flex: 0 0 auto;
-    padding: 16px 30px 28px;
+    padding: 10px 30px 22px;
   }
 
-  .left-tools,
-  .right-tools {
-    display: flex;
+  .dock {
+    display: grid;
+    grid-template-columns: 1fr 84px 64px 84px 1fr;
     align-items: center;
-    gap: 8px;
+    justify-items: center;
   }
 
-  .right-tools {
-    justify-content: flex-end;
-  }
-
-  .circle-btn,
-  .next-zone button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 42px;
-    border: 1px solid var(--color-line);
-    border-radius: 50%;
-    background: var(--color-glass);
-    color: var(--color-primary);
-    font-size: 14px;
-  }
-
-  .next-zone button {
-    background: transparent;
-    font-size: 18px;
-  }
-
-  .circle-btn.saved {
-    border-color: var(--color-saved-line);
-    background: var(--color-saved-bg);
-    color: var(--color-saved);
-  }
-
-  .circle-btn:disabled,
-  .next-zone button:disabled {
-    cursor: not-allowed;
-    opacity: 0.35;
-  }
-
-  .next-zone {
+  .dock .dock-item {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    color: var(--color-hint);
+    gap: 4px;
+    padding: 4px 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-quiet);
     font-size: 10px;
-    letter-spacing: 0.08em;
-  }
-
-  .counter {
-    margin: 0;
-    padding-bottom: 10px;
-    color: var(--color-counter);
-    font-size: 11px;
-    text-align: right;
+    letter-spacing: 0.02em;
     white-space: nowrap;
   }
 
-  .counter strong {
-    color: var(--color-counter-strong);
-    font-size: 16px;
-    font-weight: 600;
+  .dock-item:nth-child(1) {
+    grid-column: 2;
+  }
+
+  .dock-icon {
+    position: relative;
+    display: grid;
+  }
+
+  .dock-dot {
+    position: absolute;
+    top: -2px;
+    right: -4px;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid var(--color-surface);
+    border-radius: 50%;
+    background: var(--color-primary);
+  }
+
+  .dock-write {
+    grid-column: 3;
+    display: grid;
+    place-items: center;
+    width: 54px;
+    height: 54px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: var(--color-surface);
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--color-primary) 32%, transparent);
+  }
+
+  .dock-item:nth-child(3) {
+    grid-column: 4;
+  }
+
+  .dock-account {
+    grid-column: 5;
+    justify-self: end;
+  }
+
+  .dock-account .dock-avatar {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    color: var(--color-text);
+    font-family: var(--font-editorial);
+    font-size: 12px;
+    line-height: 1;
+    letter-spacing: 0;
+  }
+
+  .dock svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .dock-write svg {
+    width: 26px;
+    height: 26px;
+    stroke-width: 2;
   }
 
   .progress {
@@ -2089,26 +2745,6 @@
     height: 2px;
     background: var(--color-progress);
     transition: width 0.28s ease;
-  }
-
-  .toast {
-    position: absolute;
-    left: 50%;
-    bottom: 188px;
-    z-index: 8;
-    margin: 0;
-    padding: 10px 15px;
-    border-radius: var(--radius-full);
-    background: var(--color-toast);
-    color: var(--color-toast-text);
-    font-size: 11px;
-    white-space: nowrap;
-    box-shadow: 0 8px 22px var(--color-toast-shadow);
-    transform: translateX(-50%);
-  }
-
-  .toast[hidden] {
-    display: none;
   }
 
   .loading-slot,
@@ -2141,42 +2777,32 @@
 
   @media (max-width: 640px) {
     .topbar {
-      padding: 18px 16px 0;
+      gap: 6px;
+      padding: 14px 14px 0 4px;
     }
 
-    .brand {
-      font-size: 22px;
-    }
-
-    .top-actions {
-      gap: 4px;
-    }
-
-    .pill-btn,
-    .text-btn {
-      padding: 8px 10px;
-      font-size: 11px;
+    .section {
+      padding: 10px 10px;
+      font-size: 12px;
     }
 
     .bottom {
-      padding: 12px 16px max(18px, env(safe-area-inset-bottom));
+      padding: 8px 14px max(14px, env(safe-area-inset-bottom));
     }
 
-    .chips-wrap {
-      width: calc(100% - 24px);
-      margin-bottom: 4px;
+    .dock {
+      grid-template-columns: 1fr 72px 58px 72px 1fr;
     }
 
-    .chips {
-      gap: 6px;
+    .dock-write {
+      width: 50px;
+      height: 50px;
     }
+  }
 
-    .chip {
-      padding: 7px 10px;
-    }
-
-    .counter {
-      font-size: 10px;
+  @media (max-width: 360px) {
+    .dock-account span {
+      display: none;
     }
   }
 
@@ -2199,9 +2825,7 @@
     }
   }
 
-  .brand,
-  .top-actions,
-  .chips-wrap,
+  .topbar,
   .bottom {
     transition: opacity 200ms ease !important;
   }
@@ -2212,9 +2836,7 @@
       transform 200ms ease !important;
   }
 
-  .swipe-deck.is-reading .brand,
-  .swipe-deck.is-reading .top-actions,
-  .swipe-deck.is-reading .chips-wrap,
+  .swipe-deck.is-reading .topbar,
   .swipe-deck.is-reading .bottom {
     opacity: 0;
     pointer-events: none;
@@ -2256,7 +2878,7 @@
     z-index: 5;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     opacity: 0;
     transform: translateY(16px);
     transition:
@@ -2269,11 +2891,37 @@
     transform: translateY(0);
   }
 
+  .read-rail {
+    position: absolute;
+    top: 50%;
+    right: 22px;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transform: translateY(-50%);
+  }
+
+  .rail-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .rail-count {
+    min-height: 13px;
+    color: var(--color-text-muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    line-height: 13px;
+  }
+
   .read-icon {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     padding: 0;
     border: 1px solid var(--color-text-muted);
     border-radius: 50%;
@@ -2283,6 +2931,14 @@
 
   .read-icon:disabled {
     opacity: 0.35;
+  }
+
+  .read-icon.active {
+    border-color: var(--color-text);
+  }
+
+  .read-icon.active:not(.read-share) svg {
+    fill: currentColor;
   }
 
   .read-icon svg {
@@ -2303,9 +2959,9 @@
   }
 
   .reader-column {
-    width: min(42rem, calc(100cqi - 48px));
+    width: min(42rem, calc(100cqi - 108px));
     margin-right: 0;
-    margin-left: max(24px, calc((100cqi - min(42rem, 100cqi - 48px)) / 2));
+    margin-left: max(24px, calc((100cqi - min(42rem, 100cqi - 108px)) / 2));
   }
 
   .reader-scroll .reader-column {
@@ -2401,9 +3057,13 @@
       padding-bottom: 24px;
     }
 
+    .read-rail {
+      right: 14px;
+    }
+
     .reader-column {
-      width: min(42rem, calc(100cqi - 40px));
-      margin-left: max(20px, calc((100cqi - min(42rem, 100cqi - 40px)) / 2));
+      width: calc(100cqi - 74px);
+      margin-left: 20px;
     }
   }
 </style>

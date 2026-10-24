@@ -6,13 +6,17 @@ import { env } from "cloudflare:workers";
 import { hasAdminSession } from "../../../features/admin/admin-auth";
 import { listCatalog } from "../../../features/admin/d1-catalog";
 import AdminCatalog from "../../../features/admin/AdminCatalog.svelte";
+import { countSubmissions } from "../../../features/moderation/d1-submissions";
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 
 if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
   return Astro.redirect("/admin/login");
 }
 
-const catalog = await listCatalog(env.DB);
+const [catalog, submissions] = await Promise.all([
+  listCatalog(env.DB),
+  countSubmissions(env.DB)
+]);
 
 Astro.response.headers.set("Cache-Control", "no-store");
 Astro.response.headers.set("X-Robots-Tag", "noindex");
@@ -26,5 +30,6 @@ Astro.response.headers.set("X-Robots-Tag", "noindex");
     client:load
     initialTopics={catalog.topics}
     initialMoods={catalog.moods}
+    pending={submissions.draft}
   />
 </BaseLayout>
