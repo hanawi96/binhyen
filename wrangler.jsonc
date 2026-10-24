@@ -19,5 +19,22 @@
 			"database_name": "binhyen-db",
 			"database_id": "438b05f8-ce0c-4ab8-885e-74b365e22719"
 		}
+	],
+	"ratelimits": [
+		{
+			"name": "INTERACTION_LIMITER",
+			"namespace_id": "1001",
+			"simple": { "limit": 30, "period": 10 }
+		},
+		{
+			"name": "NEW_ACTOR_LIMITER",
+			"namespace_id": "1002",
+			"simple": { "limit": 10, "period": 60 }
+		},
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1003",
+			"simple": { "limit": 10, "period": 60 }
+		}
 	]
 }
