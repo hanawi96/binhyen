@@ -3,12 +3,11 @@
 
   interface Props {
     content: ContentItem;
-    position: string;
     leaving?: boolean;
     onRead?: () => void;
   }
 
-  let { content, position, leaving = false, onRead }: Props = $props();
+  let { content, leaving = false, onRead }: Props = $props();
 
   const ornaments: Record<ContentTheme, string> = {
     peace: "❋",
@@ -27,21 +26,17 @@
   data-theme={content.theme}
   aria-labelledby={`content-title-${content.id}`}
 >
-  <p class="eyebrow">
-    {content.category} · {position}
-  </p>
   <div class="ornament" aria-hidden="true">
     {ornaments[content.theme]}
   </div>
   <h2 id={`content-title-${content.id}`} class="headline">
     {content.title}
   </h2>
-  {#if content.description}
-    <p class="subtext">{content.description}</p>
+  {#if content.hasArticle}
+    <button type="button" class="readmore" onclick={() => onRead?.()}>
+      Đọc thêm ↗
+    </button>
   {/if}
-  <button type="button" class="readmore" onclick={() => onRead?.()}>
-    Đọc thêm ↗
-  </button>
 </article>
 
 <style>
@@ -73,16 +68,6 @@
     transform: translateY(-16px);
   }
 
-  .eyebrow {
-    margin-bottom: 18px;
-    color: var(--color-eyebrow);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    line-height: 1.6;
-    text-transform: uppercase;
-  }
-
   .ornament {
     margin-bottom: 12px;
     color: var(--color-ornament);
@@ -108,19 +93,6 @@
     line-clamp: 6;
   }
 
-  .subtext {
-    max-width: 520px;
-    margin: 24px auto 0;
-    overflow: hidden;
-    color: var(--color-text-secondary);
-    font-size: 13px;
-    line-height: 1.9;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-  }
-
   .readmore {
     margin-top: 24px;
     padding: 10px 14px;
@@ -138,10 +110,6 @@
       line-height: 1.38;
     }
 
-    .subtext {
-      font-size: 12px;
-    }
-
     .stage {
       padding: 8px 52px 12px 12px;
     }
@@ -152,20 +120,10 @@
       display: none;
     }
 
-    .eyebrow {
-      margin-bottom: 10px;
-    }
-
     .headline {
       font-size: clamp(26px, 6vw, 40px);
       -webkit-line-clamp: 5;
       line-clamp: 5;
-    }
-
-    .subtext {
-      margin-top: 12px;
-      -webkit-line-clamp: 2;
-      line-clamp: 2;
     }
   }
 </style>

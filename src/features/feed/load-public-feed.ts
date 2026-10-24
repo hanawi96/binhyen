@@ -41,6 +41,7 @@ export interface ContentRow {
   published_at: number;
   topics_json: string;
   moods_json: string;
+  has_article: number | null;
 }
 
 interface RankedContent extends ContentItem {
@@ -48,6 +49,8 @@ interface RankedContent extends ContentItem {
 }
 
 export function mapRow(row: ContentRow): RankedContent {
+  const hasArticle = Number(row.has_article) === 1;
+
   return {
     id: row.id,
     slug: row.slug,
@@ -62,6 +65,7 @@ export function mapRow(row: ContentRow): RankedContent {
     suitableMoods: JSON.parse(
       row.moods_json ?? "[]"
     ) as ContentMood[],
+    ...(hasArticle ? { hasArticle: true } : {}),
     publishedAt: row.published_at
   };
 }
@@ -78,7 +82,8 @@ export function toContentItem(row: RankedContent): ContentItem {
     tag: row.tag,
     theme: row.theme,
     topics: row.topics,
-    suitableMoods: row.suitableMoods
+    suitableMoods: row.suitableMoods,
+    ...(row.hasArticle ? { hasArticle: true } : {})
   };
 }
 
@@ -181,7 +186,18 @@ function bucketQuery(
         SELECT json_group_array(cm.mood_slug)
         FROM content_moods cm
         WHERE cm.content_id = c.id
-      ) AS moods_json
+      ) AS moods_json,
+      (
+        SELECT CASE
+          WHEN d.body_markdown IS NOT NULL
+            AND length(trim(d.body_markdown)) > 0
+          THEN 1
+          ELSE 0
+        END
+        FROM content_details d
+        WHERE d.content_id = c.id
+        LIMIT 1
+      ) AS has_article
     FROM contents c
     WHERE c.status = 'published'
       AND c.published_at IS NOT NULL

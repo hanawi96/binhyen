@@ -115,7 +115,6 @@
   let articleBlocks = $state<ArticleBlock[]>([]);
   let articleReady = $state(false);
   let articleError = $state("");
-  let readProgress = $state(0);
   let readScroll = $state<HTMLElement | null>(null);
   let readSerial = 0;
   let closeTimer = 0;
@@ -1304,14 +1303,6 @@
     return article.body;
   }
 
-  function measureRead() {
-    if (!readScroll) return;
-
-    const room = readScroll.scrollHeight - readScroll.clientHeight;
-    readProgress =
-      room <= 1 ? 100 : (readScroll.scrollTop / room) * 100;
-  }
-
   function openReading(target?: ReadItem, fromMine = false) {
     const item = target ?? contents[currentIndex];
     if (!item || reading) return;
@@ -1324,7 +1315,6 @@
     articleBlocks = [];
     articleReady = false;
     articleError = "";
-    readProgress = 0;
     reading = true;
     readerShown = false;
 
@@ -1365,7 +1355,6 @@
 
         articleBlocks = blocks;
         articleReady = true;
-        window.setTimeout(measureRead, 32);
       })
       .catch(() => {
         if (serial !== readSerial) return;
@@ -1387,7 +1376,6 @@
       articleBlocks = [];
       articleReady = false;
       articleError = "";
-      readProgress = 0;
     }, 200);
   }
 
@@ -1406,7 +1394,6 @@
       articleBlocks = [];
       articleReady = false;
       articleError = "";
-      readProgress = 0;
 
       if (
         hasMore &&
@@ -1826,7 +1813,6 @@
       >
         <ContentCard
           {content}
-          position={String(index + 1).padStart(2, "0")}
           leaving={readingOut && index === currentIndex}
           onRead={openReading}
         />
@@ -1937,8 +1923,8 @@
     </span>
   {/snippet}
 
-  {#if activeItem}
-    <div class="read-rail" inert={sheetOpen && !reading}>
+  {#if activeItem && !reading}
+    <div class="read-rail" inert={sheetOpen}>
       <div class="rail-item">
         <button
           type="button"
@@ -1990,28 +1976,80 @@
 
   {#if reading && readItem}
     {@const item = readItem}
-    <div class="read-actions" class:shown={readerShown}>
-      <button
-        type="button"
-        class="read-icon"
-        onclick={closeReading}
-        aria-label="Khép lại"
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        class="read-icon"
-        onclick={readNext}
-        disabled={!canNext || readFromMine}
-        aria-label="Bài kế"
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M3.5 8h9M8.8 4.3 12.5 8l-3.7 3.7" />
-        </svg>
-      </button>
+    <div
+      class="reader-dock"
+      class:shown={readerShown}
+      inert={sheetOpen}
+    >
+      <div class="reader-dock-react" aria-label="Tương tác">
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon"
+            class:active={railView?.liked ?? false}
+            aria-label="Yêu thích"
+            aria-pressed={railView?.liked ?? false}
+            onclick={() => toggleReaction("like")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
+            </svg>
+          </button>
+          {@render railCount("likeText")}
+        </div>
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon"
+            class:active={railView?.saved ?? false}
+            aria-label="Lưu"
+            aria-pressed={railView?.saved ?? false}
+            onclick={() => toggleReaction("save")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
+            </svg>
+          </button>
+          {@render railCount("saveText")}
+        </div>
+        <div class="rail-item">
+          <button
+            type="button"
+            class="read-icon read-share"
+            class:active={sharedId === item.id}
+            aria-label={sharedId === item.id ? "Đã chia sẻ" : "Chia sẻ"}
+            onclick={shareCurrent}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
+            </svg>
+          </button>
+          {@render railCount("shareText")}
+        </div>
+      </div>
+      <div class="reader-dock-nav">
+        <button
+          type="button"
+          class="read-icon"
+          onclick={closeReading}
+          aria-label="Khép lại"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="read-icon"
+          onclick={readNext}
+          disabled={!canNext || readFromMine}
+          aria-label="Bài kế"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.5 8h9M8.8 4.3 12.5 8l-3.7 3.7" />
+          </svg>
+        </button>
+      </div>
     </div>
     <article
       class="reader"
@@ -2019,16 +2057,8 @@
       use:readWheel
       aria-labelledby={`read-title-${item.id}`}
     >
-      <div
-        class="reader-scroll"
-        bind:this={readScroll}
-        onscroll={measureRead}
-      >
+      <div class="reader-scroll" bind:this={readScroll}>
       <div class="reader-column">
-        <p class="reader-kicker">{item.category}</p>
-        <div class="reader-mark" aria-hidden="true">
-          {readMarks[item.theme] ?? "❋"}
-        </div>
         <h2 id={`read-title-${item.id}`}>{item.title}</h2>
 
         {#if articleError}
@@ -2063,12 +2093,6 @@
       </div>
       </div>
     </article>
-  {/if}
-
-  {#if reading}
-    <div class="progress-track" aria-hidden="true">
-      <div class="progress" style:width="{readProgress}%"></div>
-    </div>
   {/if}
 
   <p class="loading-slot" aria-live="polite">
@@ -2880,28 +2904,6 @@
     stroke-width: 2;
   }
 
-  .progress-track {
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: 10px;
-    z-index: 6;
-    height: 2px;
-    overflow: hidden;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    pointer-events: none;
-  }
-
-  .progress {
-    height: 100%;
-    border: 0;
-    border-radius: 999px;
-    background: var(--color-progress);
-    transition: width 0.28s ease;
-  }
-
   .loading-slot,
   .other-items-slot,
   .end-slot,
@@ -2974,7 +2976,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .progress,
     .slide {
       transition-duration: 0.01ms;
     }
@@ -3012,7 +3013,7 @@
     position: absolute;
     top: 72px;
     right: 0;
-    bottom: 0;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
     left: 0;
     z-index: 4;
     display: flex;
@@ -3031,24 +3032,48 @@
     transform: translateY(0);
   }
 
-  .read-actions {
+  .reader-dock {
     position: absolute;
-    right: 22px;
-    bottom: max(22px, calc(env(safe-area-inset-bottom) + 12px));
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 5;
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 18px max(12px, calc(env(safe-area-inset-bottom) + 8px));
+    background: transparent;
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(12px);
+    pointer-events: none;
     transition:
       opacity 200ms ease,
       transform 200ms ease !important;
   }
 
-  .read-actions.shown {
+  .reader-dock.shown {
     opacity: 1;
     transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  .reader-dock-react,
+  .reader-dock-nav {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .reader-dock .rail-item {
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .reader-dock .rail-count {
+    width: auto;
+    min-width: 1.2rem;
+    text-align: left;
   }
 
   .read-rail {
@@ -3201,31 +3226,13 @@
   }
 
   .reader-column {
-    width: min(42rem, calc(100cqi - 108px));
-    margin-right: 0;
-    margin-left: max(24px, calc((100cqi - min(42rem, 100cqi - 108px)) / 2));
+    width: min(42rem, calc(100cqi - 48px));
+    margin-right: auto;
+    margin-left: auto;
   }
 
   .reader-scroll .reader-column {
-    padding-bottom: 64px;
-  }
-
-  .reader .reader-kicker {
-    margin: 6px 0 8px;
-    color: var(--color-eyebrow);
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    line-height: 1.4;
-    text-transform: uppercase;
-  }
-
-  .reader-mark {
-    margin-bottom: 14px;
-    color: var(--color-ornament);
-    font-family: var(--font-editorial);
-    font-size: 2.6rem;
-    line-height: 1;
+    padding-bottom: 32px;
   }
 
   .reader h2 {
@@ -3288,15 +3295,21 @@
   @media (max-width: 640px) {
     .reader {
       top: 58px;
+      bottom: calc(60px + env(safe-area-inset-bottom, 0px));
     }
 
-    .read-actions {
-      right: 14px;
-      bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
+    .reader-dock {
+      padding: 8px 14px max(10px, calc(env(safe-area-inset-bottom) + 6px));
+      gap: 12px;
+    }
+
+    .reader-dock-react,
+    .reader-dock-nav {
+      gap: 10px;
     }
 
     .reader-scroll {
-      padding-bottom: 24px;
+      padding-bottom: 16px;
     }
 
     .read-rail {
@@ -3304,8 +3317,9 @@
     }
 
     .reader-column {
-      width: calc(100cqi - 74px);
-      margin-left: 20px;
+      width: min(42rem, calc(100cqi - 32px));
+      margin-left: 16px;
+      margin-right: 16px;
     }
   }
 </style>

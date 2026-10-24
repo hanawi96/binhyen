@@ -52,6 +52,17 @@ export async function loadLovedFeed(
            FROM content_moods cm
            WHERE cm.content_id = c.id
          ) AS moods_json,
+         (
+           SELECT CASE
+             WHEN d.body_markdown IS NOT NULL
+               AND length(trim(d.body_markdown)) > 0
+             THEN 1
+             ELSE 0
+           END
+           FROM content_details d
+           WHERE d.content_id = c.id
+           LIMIT 1
+         ) AS has_article,
          s.like_count
        FROM content_stats s
        CROSS JOIN contents c ON c.id = s.content_id
