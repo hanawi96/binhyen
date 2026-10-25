@@ -167,7 +167,22 @@
 
   {#if content.hasArticle}
     <button type="button" class="readmore" onclick={() => onRead?.()}>
-      Vuốt sang để đọc thêm...
+      Vuốt sang để đọc thêm
+      <svg
+        class="readmore-icon"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke-width="1.5"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5"
+        />
+      </svg>
     </button>
   {/if}
 
@@ -348,6 +363,9 @@
    */
   .readmore {
     --readmore-pad-y: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     margin-top: calc(var(--chrome-gap) - var(--readmore-pad-y));
     padding: var(--readmore-pad-y) 14px;
     border: 0;
@@ -355,6 +373,12 @@
     color: var(--color-primary);
     font-size: 12px;
     font-weight: 700;
+  }
+
+  .readmore-icon {
+    width: 11px;
+    height: 11px;
+    flex: none;
   }
 
   /* Poll cao: giới hạn khối lựa chọn để cụm vẫn căn giữa cân. */

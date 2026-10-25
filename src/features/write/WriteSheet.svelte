@@ -49,7 +49,7 @@
   onMount(() => {
     const timer = window.setTimeout(() => {
       mounted = true;
-    }, 24);
+    }, 16);
     return () => window.clearTimeout(timer);
   });
 
@@ -364,17 +364,17 @@
 
 <style>
   .write-space {
-    position: fixed;
+    position: absolute;
     inset: 0;
-    z-index: 30;
+    z-index: 8;
     display: grid;
     place-items: stretch;
     pointer-events: none;
     visibility: hidden;
     opacity: 0;
     transition:
-      opacity 360ms ease,
-      visibility 0s linear 360ms;
+      opacity 200ms ease,
+      visibility 0s linear 200ms;
   }
 
   .write-space.shown {
@@ -382,11 +382,10 @@
     visibility: visible;
     opacity: 1;
     transition:
-      opacity 360ms ease,
+      opacity 200ms ease,
       visibility 0s;
   }
 
-  /* Veil sáng hơn Mine/Account — cảm giác “trang giấy mở” giữa không gian. */
   .write-veil {
     position: absolute;
     inset: 0;
@@ -394,20 +393,8 @@
     margin: 0;
     padding: 0;
     border: 0;
-    background:
-      radial-gradient(
-        ellipse 90% 70% at 50% 18%,
-        color-mix(in oklab, var(--color-surface) 55%, transparent),
-        transparent 70%
-      ),
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--color-surface) 34%, transparent),
-        color-mix(in oklab, var(--color-text) 14%, transparent) 48%,
-        color-mix(in oklab, var(--color-surface) 28%, transparent)
-      );
-    backdrop-filter: blur(22px) saturate(1.08);
-    -webkit-backdrop-filter: blur(22px) saturate(1.08);
+    border-radius: inherit;
+    background: transparent;
     cursor: pointer;
   }
 
@@ -416,20 +403,20 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
-    width: min(720px, 100%);
+    width: 100%;
     height: 100%;
-    max-height: 100dvh;
+    max-height: 100%;
     margin: 0 auto;
     outline: none;
-    transform: translateY(22px) scale(0.988);
+    transform: translateY(10px);
     opacity: 0;
     transition:
-      transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 300ms ease;
+      transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 200ms ease;
   }
 
   .write-space.shown .write-panel {
-    transform: translateY(var(--write-drag, 0px)) scale(1);
+    transform: translateY(var(--write-drag, 0px));
     opacity: 1;
   }
 
@@ -439,10 +426,7 @@
 
   .write-top {
     flex: none;
-    padding:
-      max(20px, env(safe-area-inset-top))
-      28px
-      0;
+    padding: 16px 18px 0;
     touch-action: none;
   }
 
@@ -467,12 +451,10 @@
     margin: 0;
     color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: clamp(2.35rem, 9vw, 3.4rem);
+    font-size: clamp(1.7rem, 6vw, 2.35rem);
     font-weight: 500;
     letter-spacing: -0.04em;
-    line-height: 1.02;
-    text-shadow: 0 1px 28px
-      color-mix(in oklab, var(--color-surface) 48%, transparent);
+    line-height: 1.05;
   }
 
   .write-close {

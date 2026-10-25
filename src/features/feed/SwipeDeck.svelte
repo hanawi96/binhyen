@@ -2154,7 +2154,7 @@
   }
 
   function handleWheel(event: WheelEvent) {
-    if (reading) return;
+    if (reading || sheetOpen) return;
     if (deckElement?.querySelector("dialog[open]")) return;
     if (Math.abs(event.deltaY) < 20) return;
 
@@ -2239,6 +2239,7 @@
   function handlePointerDown(event: PointerEvent) {
     if (
       reading ||
+      sheetOpen ||
       dragging ||
       animating ||
       replaceOnLoad ||
@@ -2471,7 +2472,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (reading) return;
+    if (reading || sheetOpen) return;
     if (event.target !== deckElement) return;
 
     if (
@@ -2621,7 +2622,7 @@
   class="swipe-deck"
   class:is-reading={reading}
   class:is-reader-shown={readerShown}
-  class:is-glass-open={mineOpen || accountOpen || writeOpen}
+  class:is-stage={sheetOpen}
 >
   <div
     class="atmosphere"
@@ -2640,7 +2641,7 @@
   <header
     class="topbar"
     class:is-collection={collectionMode}
-    inert={reading || sheetOpen}
+    inert={reading}
   >
     {#if collection}
       <div class="collection-bar">
@@ -2694,11 +2695,12 @@
     class:dragging={dragging}
     class:snap-lock={snapLock}
     class:fade-swap={fadeSwap}
-    inert={reading || sheetOpen}
+    class:is-stage={sheetOpen}
+    inert={reading}
     bind:this={deckElement}
     tabindex="0"
     role="region"
-    aria-label="Các nội dung khám phá"
+    aria-label={sheetOpen ? "Sân khấu chức năng" : "Các nội dung khám phá"}
     aria-roledescription="Bộ thẻ vuốt"
     onpointerdown={handlePointerDown}
     onpointermove={handlePointerMove}
@@ -2715,13 +2717,13 @@
       <div
         class="slide"
         class:inactive={!isActive}
-        aria-hidden={!isActive}
-        inert={!isActive}
+        aria-hidden={!isActive || sheetOpen}
+        inert={!isActive || sheetOpen}
         style={`--slide-index: ${index}; transform: translate3d(${isActive ? "var(--drag-x, 0px)" : "0px"}, calc((var(--slide-index) - var(--deck-index, 0)) * 100% + var(--drag-offset, 0px)), 0);`}
       >
         <ContentCard
           {content}
-          active={isActive}
+          active={isActive && !sheetOpen}
           leaving={isActive && readingOut}
           onRead={openReading}
         >
@@ -2752,11 +2754,76 @@
       </div>
     {/if}
 
+    {#if MineSheet}
+      <MineSheet
+        open={mineOpen}
+        {reading}
+        signedIn={user !== null}
+        {postsVersion}
+        {postNews}
+        onPostsSeen={() => (postNews = 0)}
+        startTab={mineTab}
+        {reactions}
+        onClose={closeSheet}
+        onOpenItem={openMineItem}
+        onSetReaction={setMineReaction}
+        onEditPost={editPost}
+      />
+    {:else if mineOpen}
+      <GlassPending
+        open
+        title="Của tôi"
+        eyebrow="Không gian riêng"
+        onClose={closeSheet}
+      />
+    {/if}
+
+    {#if WriteSheet}
+      <WriteSheet
+        open={writeOpen}
+        userId={user?.id ?? null}
+        {userKnown}
+        topics={writeTopics}
+        edit={writeEdit}
+        onClose={closeSheet}
+        onSignIn={openAccount}
+        onSaved={() => (postsVersion += 1)}
+        onOpenPosts={openMinePosts}
+      />
+    {:else if writeOpen}
+      <GlassPending
+        open
+        title={writeEdit ? "Sửa bài" : "Viết bài"}
+        eyebrow={writeEdit ? "Chỉnh sửa bản nháp" : "Một khoảng yên để viết"}
+        onClose={closeSheet}
+      />
+    {/if}
+
+    {#if AccountSheet}
+      <AccountSheet
+        open={accountOpen}
+        {user}
+        {userKnown}
+        onClose={closeSheet}
+        {onSignedIn}
+        {onSignedOut}
+        onOpenMine={openMine}
+        {onProfileSaved}
+      />
+    {:else if accountOpen}
+      <GlassPending
+        open
+        title="Tài khoản"
+        eyebrow="Không gian cá nhân"
+        onClose={closeSheet}
+      />
+    {/if}
   </div>
 
   {#if collectionMode && collectionTotal > 1 && contents.length > 0}
     <div
       class="collection-pager-bar"
+      class:is-stage-hidden={sheetOpen}
       aria-hidden="true"
       inert={reading || sheetOpen}
     >
@@ -2767,7 +2834,7 @@
     </div>
   {/if}
 
-  <footer class="bottom" inert={reading || sheetOpen}>
+  <footer class="bottom" inert={reading}>
     <nav class="dock" aria-label="Điều hướng chính">
       <button
         type="button"
@@ -2932,7 +2999,7 @@
     {/if}
   {/snippet}
 
-  {#if activeItem}
+  {#if activeItem && !sheetOpen}
     {@render feedRail("side")}
   {/if}
 
@@ -3130,71 +3197,6 @@
       · Đã tải: {contents.length} thẻ
       · {hasMore ? "Còn dữ liệu" : "Đã tải hết dữ liệu"}
     </p>
-  {/if}
-
-  {#if MineSheet}
-    <MineSheet
-      open={mineOpen}
-      {reading}
-      signedIn={user !== null}
-      {postsVersion}
-      {postNews}
-      onPostsSeen={() => (postNews = 0)}
-      startTab={mineTab}
-      {reactions}
-      onClose={closeSheet}
-      onOpenItem={openMineItem}
-      onSetReaction={setMineReaction}
-      onEditPost={editPost}
-    />
-  {:else if mineOpen}
-    <GlassPending
-      open
-      title="Của tôi"
-      eyebrow="Không gian riêng"
-      onClose={closeSheet}
-    />
-  {/if}
-
-  {#if WriteSheet}
-    <WriteSheet
-      open={writeOpen}
-      userId={user?.id ?? null}
-      {userKnown}
-      topics={writeTopics}
-      edit={writeEdit}
-      onClose={closeSheet}
-      onSignIn={openAccount}
-      onSaved={() => (postsVersion += 1)}
-      onOpenPosts={openMinePosts}
-    />
-  {:else if writeOpen}
-    <GlassPending
-      open
-      title={writeEdit ? "Sửa bài" : "Viết bài"}
-      eyebrow={writeEdit ? "Chỉnh sửa bản nháp" : "Một khoảng yên để viết"}
-      onClose={closeSheet}
-    />
-  {/if}
-
-  {#if AccountSheet}
-    <AccountSheet
-      open={accountOpen}
-      {user}
-      {userKnown}
-      onClose={closeSheet}
-      {onSignedIn}
-      {onSignedOut}
-      onOpenMine={openMine}
-      {onProfileSaved}
-    />
-  {:else if accountOpen}
-    <GlassPending
-      open
-      title="Tài khoản"
-      eyebrow="Không gian cá nhân"
-      onClose={closeSheet}
-    />
   {/if}
 </div>
 
@@ -4089,12 +4091,33 @@
       transform 200ms ease !important;
   }
 
-  /* Không gian kính: veil sheet tự mờ nền; chỉ ẩn chrome để khỏi đè kính. */
-  .swipe-deck.is-glass-open .topbar,
-  .swipe-deck.is-glass-open .bottom {
+  /* Sân khấu: sheet thay thẻ trong viewport — không overlay full-screen. */
+  .deck-viewport .slide,
+  .deck-viewport .empty-state {
+    transition:
+      opacity 180ms ease,
+      visibility 0s linear 0s;
+  }
+
+  .deck-viewport.is-stage {
+    touch-action: pan-y;
+    cursor: default;
+  }
+
+  .deck-viewport.is-stage .slide,
+  .deck-viewport.is-stage .empty-state {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity 160ms ease,
+      visibility 0s linear 160ms;
+  }
+
+  .collection-pager-bar.is-stage-hidden {
     opacity: 0;
     pointer-events: none;
-    transition: opacity 240ms ease;
+    transition: opacity 160ms ease;
   }
 
   /* Mở bài: chrome feed ẩn theo hướng “ra ngoài”; đóng thì ngược lại. */

@@ -52,7 +52,7 @@
   onMount(() => {
     const timer = window.setTimeout(() => {
       mounted = true;
-    }, 24);
+    }, 16);
     return () => window.clearTimeout(timer);
   });
 
@@ -459,17 +459,17 @@
 
 <style>
   .acc-space {
-    position: fixed;
+    position: absolute;
     inset: 0;
-    z-index: 30;
+    z-index: 8;
     display: grid;
     place-items: stretch;
     pointer-events: none;
     visibility: hidden;
     opacity: 0;
     transition:
-      opacity 320ms ease,
-      visibility 0s linear 320ms;
+      opacity 200ms ease,
+      visibility 0s linear 200ms;
   }
 
   .acc-space.shown {
@@ -477,7 +477,7 @@
     visibility: visible;
     opacity: 1;
     transition:
-      opacity 320ms ease,
+      opacity 200ms ease,
       visibility 0s;
   }
 
@@ -488,15 +488,8 @@
     margin: 0;
     padding: 0;
     border: 0;
-    background:
-      linear-gradient(
-        165deg,
-        color-mix(in oklab, var(--color-surface) 22%, transparent),
-        color-mix(in oklab, var(--color-text) 28%, transparent) 55%,
-        color-mix(in oklab, var(--color-surface) 18%, transparent)
-      );
-    backdrop-filter: blur(18px) saturate(1.15);
-    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    border-radius: inherit;
+    background: transparent;
     cursor: pointer;
   }
 
@@ -505,20 +498,20 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
-    width: min(560px, 100%);
+    width: 100%;
     height: 100%;
-    max-height: 100dvh;
+    max-height: 100%;
     margin: 0 auto;
     outline: none;
-    transform: translateY(18px) scale(0.985);
+    transform: translateY(10px);
     opacity: 0;
     transition:
-      transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 280ms ease;
+      transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 200ms ease;
   }
 
   .acc-space.shown .acc-panel {
-    transform: translateY(var(--acc-drag, 0px)) scale(1);
+    transform: translateY(var(--acc-drag, 0px));
     opacity: 1;
   }
 
@@ -528,10 +521,7 @@
 
   .acc-top {
     flex: none;
-    padding:
-      max(18px, env(safe-area-inset-top))
-      22px
-      0;
+    padding: 16px 18px 0;
     touch-action: none;
   }
 
@@ -556,12 +546,10 @@
     margin: 0;
     color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: clamp(2.1rem, 8vw, 3rem);
+    font-size: clamp(1.7rem, 6vw, 2.35rem);
     font-weight: 500;
     letter-spacing: -0.03em;
     line-height: 1.05;
-    text-shadow: 0 1px 24px
-      color-mix(in oklab, var(--color-surface) 40%, transparent);
   }
 
   .acc-close {
