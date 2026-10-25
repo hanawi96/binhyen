@@ -13,7 +13,7 @@
     leaving?: boolean;
     onRead?: () => void;
     actions?: Snippet;
-    /** Nội dung dưới «Đọc thêm» (vd. pager bộ sưu tập). */
+    /** Nội dung dưới gợi ý đọc thêm (vd. pager bộ sưu tập). */
     below?: Snippet;
   }
 
@@ -167,7 +167,7 @@
 
   {#if content.hasArticle}
     <button type="button" class="readmore" onclick={() => onRead?.()}>
-      Đọc thêm...
+      Vuốt sang để đọc thêm...
     </button>
   {/if}
 
@@ -180,7 +180,7 @@
 
 <style>
   .stage {
-    /* Khoảng actions ↔ nội dung = nội dung ↔ Đọc thêm (đối xứng). */
+    /* Khoảng actions ↔ nội dung = nội dung ↔ gợi ý đọc thêm (đối xứng). */
     --chrome-gap: 1.5rem;
     display: flex;
     flex-direction: column;

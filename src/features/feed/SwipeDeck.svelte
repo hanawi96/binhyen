@@ -175,6 +175,9 @@
   const AXIS_LOCK = 10;
   const MIN_FAST_DISTANCE = 18;
   const FAST_VELOCITY = 0.32;
+  /** Chạm nhẹ (không vuốt) — nhận diện double-tap thích. */
+  const TAP_SLOP = 14;
+  const DOUBLE_TAP_MS = 300;
   /** Cao su ở biên: càng kéo càng nặng. */
   const EDGE_RESIST_START = 0.42;
   const EDGE_RESIST_END = 0.2;
@@ -635,6 +638,61 @@
       }
     }
     void setReaction(item.id, kind, on);
+  }
+
+  /** Double-tap: chỉ bật thích (không bỏ thích), kiểu Instagram. */
+  let lastTapAt = 0;
+  let lastTapId: string | null = null;
+
+  function likeIconOrigin(): { x: number; y: number } | null {
+    const btn = deckElement?.querySelector(
+      ".slide:not(.inactive) [data-rail-like]"
+    );
+    if (!(btn instanceof HTMLElement)) return null;
+    const box = btn.getBoundingClientRect();
+    return {
+      x: box.left + box.width / 2,
+      y: box.top + box.height / 2
+    };
+  }
+
+  function likeFromDoubleTap(clientX: number, clientY: number) {
+    const item = activeItem;
+    if (!item) return;
+
+    // Tim bay tại chỗ chạm + tại icon thích.
+    burstHearts({ x: clientX, y: clientY });
+    const icon = likeIconOrigin();
+    if (icon) burstHearts(icon);
+
+    if (!reactions[item.id]?.liked) {
+      void setReaction(item.id, "like", true);
+    }
+  }
+
+  /** @returns true nếu đã xử lý double-tap thích. */
+  function noteTapOrLike(clientX: number, clientY: number): boolean {
+    const item = contents[currentIndex];
+    if (!item) {
+      lastTapAt = 0;
+      lastTapId = null;
+      return false;
+    }
+
+    const now = performance.now();
+    if (
+      lastTapId === item.id &&
+      now - lastTapAt <= DOUBLE_TAP_MS
+    ) {
+      lastTapAt = 0;
+      lastTapId = null;
+      likeFromDoubleTap(clientX, clientY);
+      return true;
+    }
+
+    lastTapAt = now;
+    lastTapId = item.id;
+    return false;
   }
 
   // Danh sach "Cua toi" biet chac trang thai cu khi chua tai so dem.
@@ -2356,6 +2414,19 @@
     setDragX(0);
 
     if (cancelled || axis === "none" || Math.abs(distance) < 5) {
+      if (
+        !cancelled &&
+        axis === "none" &&
+        Math.abs(distance) < TAP_SLOP &&
+        Math.abs(distanceX) < TAP_SLOP &&
+        noteTapOrLike(event.clientX, event.clientY)
+      ) {
+        dragging = false;
+        queuedOffset = 0;
+        setOffset(0);
+        return;
+      }
+
       startTransition(
         null,
         0,
@@ -2820,6 +2891,7 @@
             type="button"
             class="read-icon"
             class:active={view.liked}
+            data-rail-like
             aria-label="Yêu thích"
             aria-pressed={view.liked}
             onclick={(event) => toggleReaction("like", event)}

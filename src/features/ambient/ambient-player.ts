@@ -26,6 +26,9 @@ export interface AmbientSnapshot {
 type Listener = () => void;
 
 let audio: HTMLAudioElement | null = null;
+let audioCtx: AudioContext | null = null;
+let gainNode: GainNode | null = null;
+let mediaSource: MediaElementAudioSourceNode | null = null;
 let prefs: AmbientPrefs = { ...DEFAULT_AMBIENT_PREFS };
 let playing = false;
 let error = "";
@@ -42,13 +45,73 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
+/**
+ * iOS / WebKit: `HTMLMediaElement.volume` bị bỏ qua (luôn ~1).
+ * Phải chỉnh qua Web Audio GainNode. Desktop vẫn dùng được cả hai;
+ * khi đã nối graph thì giữ element.volume = 1, chỉ điều khiển gain.
+ */
+function applyOutputVolume(volume = prefs.volume): void {
+  const level = clampVolume(volume);
+  if (gainNode) {
+    gainNode.gain.value = level;
+    if (audio) audio.volume = 1;
+    return;
+  }
+  if (audio) audio.volume = level;
+}
+
+function ensureAudioGraph(node: HTMLAudioElement): void {
+  if (mediaSource || typeof window === "undefined") return;
+
+  const Ctx =
+    window.AudioContext ||
+    (
+      window as unknown as {
+        webkitAudioContext?: typeof AudioContext;
+      }
+    ).webkitAudioContext;
+
+  if (!Ctx) {
+    applyOutputVolume();
+    return;
+  }
+
+  try {
+    audioCtx = new Ctx();
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = clampVolume(prefs.volume);
+    mediaSource = audioCtx.createMediaElementSource(node);
+    mediaSource.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    node.volume = 1;
+  } catch {
+    // Fallback: element.volume (desktop / trình duyệt cũ).
+    gainNode = null;
+    mediaSource = null;
+    audioCtx = null;
+    applyOutputVolume();
+  }
+}
+
+async function resumeAudioContext(): Promise<void> {
+  if (!audioCtx) return;
+  if (audioCtx.state === "suspended") {
+    try {
+      await audioCtx.resume();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function ensureAudio(): HTMLAudioElement {
   if (audio) return audio;
 
   audio = new Audio();
   audio.loop = true;
   audio.preload = "none";
-  audio.volume = clampVolume(prefs.volume);
+  ensureAudioGraph(audio);
+  applyOutputVolume();
 
   audio.addEventListener("playing", () => {
     if (!prefs.enabled) {
@@ -108,6 +171,8 @@ function armUnlock(): void {
       queueMicrotask(() => {
         if (prefs.enabled && !playing) void tryPlay();
       });
+    } else {
+      void resumeAudioContext();
     }
   };
 
@@ -144,7 +209,7 @@ async function tryPlay(): Promise<void> {
 
   const node = ensureAudio();
   applyTrack(track);
-  node.volume = clampVolume(prefs.volume);
+  applyOutputVolume();
   error = "";
 
   if (!prefs.enabled || epoch !== playEpoch) {
@@ -153,6 +218,7 @@ async function tryPlay(): Promise<void> {
   }
 
   try {
+    await resumeAudioContext();
     await node.play();
     // Quan trong: play() thanh cong nhung user da tat / epoch doi → pause ngay.
     if (!prefs.enabled || epoch !== playEpoch) {
@@ -319,7 +385,9 @@ export async function setAmbientEnabled(on: boolean): Promise<void> {
 export function setAmbientVolume(volume: number): void {
   prefs = { ...prefs, volume: clampVolume(volume) };
   persist();
-  if (audio) audio.volume = prefs.volume;
+  // iOS: chỉ GainNode có hiệu lực; desktop: gain hoặc element.volume.
+  applyOutputVolume(prefs.volume);
+  void resumeAudioContext();
   notify();
 }
 
