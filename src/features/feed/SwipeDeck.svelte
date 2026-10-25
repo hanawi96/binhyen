@@ -2863,6 +2863,29 @@
 
   <footer class="bottom" inert={reading}>
     <nav class="dock" aria-label="Điều hướng chính">
+      <button type="button" class="dock-item">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="6" cy="18" r="2" />
+          <circle cx="18" cy="6" r="2" />
+          <path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16" />
+        </svg>
+        <span>Hành trình</span>
+      </button>
+      <button
+        type="button"
+        class="dock-item dock-write"
+        aria-label="Viết bài"
+        aria-haspopup="dialog"
+        aria-expanded={writeOpen}
+        onpointerdown={warmWrite}
+        onmouseenter={warmWrite}
+        onclick={openWrite}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        <span>Viết bài</span>
+      </button>
       <button
         type="button"
         class="dock-item"
@@ -2883,29 +2906,6 @@
           {/if}
         </span>
         <span>Của tôi</span>
-      </button>
-      <button
-        type="button"
-        class="dock-item dock-write"
-        aria-label="Viết bài"
-        aria-haspopup="dialog"
-        aria-expanded={writeOpen}
-        onpointerdown={warmWrite}
-        onmouseenter={warmWrite}
-        onclick={openWrite}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span>Viết bài</span>
-      </button>
-      <button type="button" class="dock-item">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="6" cy="18" r="2" />
-          <circle cx="18" cy="6" r="2" />
-          <path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16" />
-        </svg>
-        <span>Hành trình</span>
       </button>
     </nav>
   </footer>
