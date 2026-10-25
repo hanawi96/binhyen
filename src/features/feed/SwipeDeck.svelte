@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import ContentCard from "./ContentCard.svelte";
+  import CollectionPager from "./CollectionPager.svelte";
   import { demoContents } from "../content/demo-contents";
   import { type ContentItem } from "../content/content.types";
   import {
@@ -55,6 +56,7 @@
     initialNotice = null,
     initialUser,
     initialPostNews = 0,
+    initialTopics = [],
     collection = null
   }: {
     initialItems?: ContentItem[];
@@ -64,6 +66,8 @@
     initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
+    /** Chủ đề từ bảng topics (slug + label + thứ tự). */
+    initialTopics?: Array<{ slug: string; label: string }>;
     collection?: {
       slug: string;
       title: string;
@@ -75,23 +79,25 @@
   } = $props();
 
   const collectionMode = $derived(collection !== null);
+  /** Vị trí thật (kèm phần đang kéo) cho pager. */
+  let collectionProgress = $state(0);
+  let progressAnim = 0;
 
   let selectedTopic = $state<TopicFilter>("all");
   let selectedMood = $state<MoodFilter>("all");
-  type SectionKey = "for-you" | "loved" | Exclude<TopicFilter, "all">;
+  type SectionKey = "for-you" | "loved" | string;
 
-  const sections: Array<{ key: SectionKey; label: string }> = [
-    { key: "for-you", label: "Dành cho bạn" },
-    { key: "loved", label: "Yêu thích nhất" },
-    { key: "peace", label: "Bình yên" },
-    { key: "stories", label: "Câu chuyện" },
-    { key: "science", label: "Khoa học" },
-    { key: "nature", label: "Thiên nhiên" },
-    { key: "perspective", label: "Góc nhìn" },
-    { key: "psychology", label: "Tâm lý" },
-    { key: "cute", label: "Dễ thương" },
-    { key: "tips", label: "Mẹo thú vị" }
-  ];
+  const sections = $derived.by(() => {
+    const rows: Array<{ key: SectionKey; label: string }> = [
+      { key: "for-you", label: "Dành cho bạn" },
+      { key: "loved", label: "Yêu thích nhất" }
+    ];
+    for (const topic of initialTopics) {
+      if (!topic.slug || topic.slug === "all") continue;
+      rows.push({ key: topic.slug, label: topic.label || topic.slug });
+    }
+    return rows;
+  });
 
   let selectedSection = $state<SectionKey>("for-you");
   let lovedMode = $state(false);
@@ -125,6 +131,12 @@
     initialItems.length > 0 ? initialCursor : "__first__";
 
   let contents = $state<ContentItem[]>(initialItems);
+  /** Tổng bài trong bộ (ưu tiên meta API, không nhỏ hơn số đã tải). */
+  const collectionTotal = $derived(
+    collectionMode
+      ? Math.max(collection?.itemCount ?? 0, contents.length)
+      : 0
+  );
   let nextCursor: string | null = startingCursor;
   let hasMore = $state(startingCursor !== null);
   let loading = $state(false);
@@ -694,8 +706,10 @@
   let mineCode: Promise<void> | null = null;
   let accountCode: Promise<void> | null = null;
   let writeCode: Promise<void> | null = null;
-  const writeTopics = sections.filter(
-    (section) => section.key !== "for-you" && section.key !== "loved"
+  const writeTopics = $derived(
+    sections
+      .filter((section) => section.key !== "for-you" && section.key !== "loved")
+      .map((section) => ({ key: section.key, label: section.label }))
   );
   let user = $state<AccountUser | null>(initialUser ?? null);
   let userKnown = $state(initialUser !== undefined);
@@ -948,37 +962,36 @@
     }
   });
 
-  // Chi GET /reactions khi feed chua mang liked/saved (vd. muc Yeu thich).
+  /** Prefetch liked/saved cho the dang xem + lan can (tranh so nhay sau khi vuot). */
+  function fetchReaction(id: string) {
+    if (personalReady.has(id) || reactionLoads.has(id)) return;
+
+    const epoch = reactionEpoch;
+    reactionLoads.add(id);
+
+    fetch(`/api/contents/${encodeURIComponent(id)}/reactions`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: unknown) => {
+        if (epoch !== reactionEpoch) return;
+        const state = readReaction(body);
+        if (!state || id in lastWrite) return;
+        reactions[id] = state;
+        personalReady.add(id);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (epoch === reactionEpoch) reactionLoads.delete(id);
+      });
+  }
+
+  // Chi GET khi feed chua mang liked/saved; prefetch current ± 1.
   $effect(() => {
-    const id = activeItem?.id;
-
-    if (!id || personalReady.has(id) || reactionLoads.has(id)) {
-      return;
+    const indexes = [currentIndex - 1, currentIndex, currentIndex + 1];
+    for (const index of indexes) {
+      if (index < 0 || index >= contents.length) continue;
+      const id = contents[index]?.id;
+      if (id) fetchReaction(id);
     }
-
-    const switching = untrack(() => railCardId !== null && railCardId !== id);
-    const delay = switching ? 250 : 0;
-
-    const timer = window.setTimeout(() => {
-      const epoch = reactionEpoch;
-      reactionLoads.add(id);
-
-      fetch(`/api/contents/${encodeURIComponent(id)}/reactions`)
-        .then((response) => (response.ok ? response.json() : null))
-        .then((body: unknown) => {
-          if (epoch !== reactionEpoch) return;
-          const state = readReaction(body);
-          if (!state || id in lastWrite) return;
-          reactions[id] = state;
-          personalReady.add(id);
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          if (epoch === reactionEpoch) reactionLoads.delete(id);
-        });
-    }, delay);
-
-    return () => window.clearTimeout(timer);
   });
 
   // STEP11_SESSION_HISTORY
@@ -1154,6 +1167,38 @@
     };
   }
 
+  function cancelProgressAnim() {
+    if (progressAnim) {
+      cancelAnimationFrame(progressAnim);
+      progressAnim = 0;
+    }
+  }
+
+  function animateCollectionProgress(target: number) {
+    if (!collectionMode) {
+      collectionProgress = target;
+      return;
+    }
+
+    cancelProgressAnim();
+    const from = collectionProgress;
+    const start = performance.now();
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / ANIMATION_MS);
+      const eased = 1 - (1 - t) ** 3;
+      collectionProgress = from + (target - from) * eased;
+      if (t < 1) {
+        progressAnim = requestAnimationFrame(step);
+        return;
+      }
+      progressAnim = 0;
+      collectionProgress = target;
+    };
+
+    progressAnim = requestAnimationFrame(step);
+  }
+
   function setOffset(value: number) {
     if (!deckElement) return;
 
@@ -1161,6 +1206,11 @@
       "--drag-offset",
       `${value}px`
     );
+
+    if (collectionMode && dragging && !animating) {
+      const height = Math.max(deckHeight, 1);
+      collectionProgress = currentIndex - value / height;
+    }
   }
 
   function setDragX(value: number) {
@@ -1229,6 +1279,10 @@
 
     pendingIndex = null;
     animating = false;
+    cancelProgressAnim();
+    if (collectionMode) {
+      collectionProgress = currentIndex;
+    }
 
     // Chi tai them sau khi chuyen the hoan tat.
     if (
@@ -1249,6 +1303,10 @@
     setDragX(0);
     animating = true;
     pendingIndex = nextIndex;
+
+    if (collectionMode) {
+      animateCollectionProgress(nextIndex ?? currentIndex);
+    }
 
     // Ton trong cai dat giam chuyen dong.
     if (
@@ -1654,12 +1712,19 @@
     animating = true;
     fadeSwap = true;
     readingOut = true;
+    if (collectionMode) {
+      animateCollectionProgress(nextIndex);
+    }
 
     readingTimer = window.setTimeout(() => {
       if (serial !== fadeSerial) return;
 
       setOffset(0);
       currentIndex = nextIndex;
+      if (collectionMode) {
+        cancelProgressAnim();
+        collectionProgress = nextIndex;
+      }
 
       readingTimer = window.setTimeout(() => {
         if (serial !== fadeSerial) return;
@@ -2506,35 +2571,27 @@
   >
     {#each visibleIndexes as index (contents[index].id)}
       {@const content = contents[index]}
+      {@const isActive = index === currentIndex}
 
       <div
         class="slide"
         use:placeSlide
-        class:inactive={index !== currentIndex}
-        aria-hidden={index !== currentIndex}
-        inert={index !== currentIndex}
-        style={`transform: translate3d(${index === currentIndex ? "var(--drag-x, 0px)" : "0px"}, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
+        class:inactive={!isActive}
+        aria-hidden={!isActive}
+        inert={!isActive}
+        style={`transform: translate3d(${isActive ? "var(--drag-x, 0px)" : "0px"}, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
         ontransitionend={(event) => handleTransitionEnd(event, index)}
       >
-        {#if index === currentIndex && activeItem}
-          <ContentCard
-            {content}
-            active
-            leaving={readingOut}
-            onRead={openReading}
-          >
-            {#snippet actions()}
-              {@render feedRail("card")}
-            {/snippet}
-          </ContentCard>
-        {:else}
-          <ContentCard
-            {content}
-            active={false}
-            leaving={false}
-            onRead={openReading}
-          />
-        {/if}
+        <ContentCard
+          {content}
+          active={isActive}
+          leaving={isActive && readingOut}
+          onRead={openReading}
+        >
+          {#snippet actions()}
+            {@render feedRail("card", content)}
+          {/snippet}
+        </ContentCard>
       </div>
     {/each}
 
@@ -2559,6 +2616,19 @@
     {/if}
 
   </div>
+
+  {#if collectionMode && collectionTotal > 1 && contents.length > 0}
+    <div
+      class="collection-pager-bar"
+      aria-hidden="true"
+      inert={reading || sheetOpen}
+    >
+      <CollectionPager
+        progress={collectionProgress}
+        total={collectionTotal}
+      />
+    </div>
+  {/if}
 
   <footer class="bottom" inert={reading || sheetOpen}>
     <nav class="dock" aria-label="Điều hướng chính">
@@ -2627,26 +2697,45 @@
     </nav>
   </footer>
 
-  {#snippet railCount(field: "likeText" | "saveText" | "shareText")}
+  {#snippet railCount(
+    field: "likeText" | "saveText" | "shareText",
+    live = true,
+    staticText = ""
+  )}
     <span class="rail-count">
-      <span
-        class="rail-count-stage"
-        class:is-moving={railMoving}
-        class:to-next={railDir === 1}
-        class:to-prev={railDir === -1}
-      >
-        {#if railMoving && railEnter}
-          <span class="rail-count-layer is-out">{railShown[field]}</span>
-          <span class="rail-count-layer is-in">{railEnter[field]}</span>
-        {:else}
-          <span class="rail-count-layer">{railShown[field]}</span>
-        {/if}
-      </span>
+      {#if live}
+        <span
+          class="rail-count-stage"
+          class:is-moving={railMoving}
+          class:to-next={railDir === 1}
+          class:to-prev={railDir === -1}
+        >
+          {#if railMoving && railEnter}
+            <span class="rail-count-layer is-out">{railShown[field]}</span>
+            <span class="rail-count-layer is-in">{railEnter[field]}</span>
+          {:else}
+            <span class="rail-count-layer">{railShown[field]}</span>
+          {/if}
+        </span>
+      {:else}
+        <span class="rail-count-stage">
+          <span class="rail-count-layer">{staticText}</span>
+        </span>
+      {/if}
     </span>
   {/snippet}
 
-  {#snippet feedRail(variant: "card" | "side")}
-    {#if activeItem}
+  {#snippet feedRail(variant: "card" | "side", item: ContentItem | null = null)}
+    {@const target = item ?? activeItem}
+    {#if target}
+      {@const live = activeItem?.id === target.id}
+      {@const view = live
+        ? railView
+        : statsFrom(
+            reactions[target.id] ??
+              reactionFromItem(target) ??
+              EMPTY_REACTION
+          )}
       <div
         class="read-rail"
         class:read-rail--card={variant === "card"}
@@ -2658,45 +2747,45 @@
           <button
             type="button"
             class="read-icon"
-            class:active={railView?.liked ?? false}
+            class:active={view.liked}
             aria-label="Yêu thích"
-            aria-pressed={railView?.liked ?? false}
+            aria-pressed={view.liked}
             onclick={(event) => toggleReaction("like", event)}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z" />
             </svg>
           </button>
-          {@render railCount("likeText")}
+          {@render railCount("likeText", live, view.likeText)}
         </div>
         <div class="rail-item">
           <button
             type="button"
             class="read-icon"
-            class:active={railView?.saved ?? false}
+            class:active={view.saved}
             aria-label="Lưu"
-            aria-pressed={railView?.saved ?? false}
+            aria-pressed={view.saved}
             onclick={() => toggleReaction("save")}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
             </svg>
           </button>
-          {@render railCount("saveText")}
+          {@render railCount("saveText", live, view.saveText)}
         </div>
         <div class="rail-item">
           <button
             type="button"
             class="read-icon read-share"
-            class:active={sharedId === activeItem.id}
-            aria-label={sharedId === activeItem.id ? "Đã chia sẻ" : "Chia sẻ"}
+            class:active={sharedId === target.id}
+            aria-label={sharedId === target.id ? "Đã chia sẻ" : "Chia sẻ"}
             onclick={shareCurrent}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 10V2.6M5.2 5.2 8 2.4l2.8 2.8M3.4 8.6v4.6h9.2V8.6" />
             </svg>
           </button>
-          {@render railCount("shareText")}
+          {@render railCount("shareText", live, view.shareText)}
         </div>
       </div>
     {/if}
@@ -3628,6 +3717,18 @@
     background: transparent;
   }
 
+  /* Cố định ngoài slide — không remount khi đổi bài. */
+  .collection-pager-bar {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2px 16px 6px;
+    pointer-events: none;
+  }
+
   .empty-state {
     border: 0;
     background: transparent;
@@ -3832,6 +3933,12 @@
   .swipe-deck.is-reader-shown .bottom {
     opacity: 0;
     transform: translate3d(0, 12px, 0);
+    pointer-events: none;
+  }
+
+  .swipe-deck.is-reader-shown .collection-pager-bar {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
     pointer-events: none;
   }
 

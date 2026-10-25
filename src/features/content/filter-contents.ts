@@ -1,13 +1,13 @@
 
+import { isCatalogSlug } from "../admin/catalog";
 import {
   contentMoods,
-  contentTopics,
   type ContentItem,
-  type ContentMood,
-  type ContentTopic
+  type ContentMood
 } from "./content.types";
 
-export type TopicFilter = ContentTopic | "all";
+/** "all" hoặc slug chủ đề trong catalog (preset / tùy chỉnh). */
+export type TopicFilter = "all" | string;
 export type MoodFilter = ContentMood | "all";
 
 function isListed(
@@ -20,7 +20,7 @@ function isListed(
 export function isTopicFilter(
   value: string
 ): value is TopicFilter {
-  return value === "all" || isListed(contentTopics, value);
+  return value === "all" || isCatalogSlug(value);
 }
 
 export function isMoodFilter(

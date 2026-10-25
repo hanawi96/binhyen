@@ -1,4 +1,4 @@
-import { isContentTopic, type ContentTopic } from "../content/content.types";
+import { isCatalogSlug } from "../admin/catalog";
 
 export const MAX_PROFILE_TOPICS = 8;
 
@@ -15,7 +15,7 @@ export interface Profile {
 
 export interface ProfileUpdate {
   displayName: string;
-  topics: ContentTopic[];
+  topics: string[];
 }
 
 export interface ProfileStore {
@@ -40,10 +40,16 @@ export function parseProfileUpdate(input: unknown): ProfileUpdate | null {
     return null;
   }
 
-  const chosen = new Set<ContentTopic>();
+  const chosen = new Set<string>();
 
   for (const topic of topics) {
-    if (typeof topic !== "string" || !isContentTopic(topic)) return null;
+    if (
+      typeof topic !== "string" ||
+      topic === "all" ||
+      !isCatalogSlug(topic)
+    ) {
+      return null;
+    }
     chosen.add(topic);
   }
 

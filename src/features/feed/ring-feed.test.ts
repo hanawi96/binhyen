@@ -4,8 +4,7 @@ import {
   contentKinds,
   contentMoods,
   contentThemes,
-  contentTopics,
-  type ContentTopic
+  contentTopics
 } from "../content/content.types";
 import type { MoodFilter, TopicFilter } from "../content/filter-contents";
 import {
@@ -170,7 +169,7 @@ function start(
   mood: MoodFilter,
   origin: number,
   freshAt: number | null = null,
-  favorites: readonly ContentTopic[] = []
+  favorites: readonly string[] = []
 ): RingCursor {
   return startRingCursor({ topic, mood, origin, freshAt, favorites });
 }
@@ -398,7 +397,7 @@ describe("ring cursor encoding", () => {
     expect(decodeRingCursor("v5:all:all:-:0:-:-:-:-:-:-:-:-:-")).toBeNull();
     expect(decodeRingCursor(edit({ 0: "v5" }))).toBeNull();
     expect(decodeRingCursor(edit({ 4: String(RANK_KEY_MAX + 1) }))).toBeNull();
-    expect(decodeRingCursor(edit({ 1: "unknown" }))).toBeNull();
+    expect(decodeRingCursor(edit({ 1: "Bad_Topic" }))).toBeNull();
     // Nhom "related" bi bat khi khong loc gi.
     expect(decodeRingCursor(edit({ 9: "-", 10: "-" }))).toBeNull();
     // Khong co moc bai moi nhung lan bai moi chua xong.
@@ -417,5 +416,11 @@ describe("ring cursor encoding", () => {
     expect(() => start("all", "all", -1)).toThrow();
     expect(() => start("all", "all", RANK_KEY_MAX + 1)).toThrow();
     expect(() => start("all", "all", 1, -5)).toThrow();
+  });
+
+  it("chấp nhận slug chủ đề có gạch ngang", () => {
+    const cursor = start("cong-nghe", "all", 12);
+    const encoded = encodeRingCursor(cursor);
+    expect(decodeRingCursor(encoded)).toEqual(cursor);
   });
 });

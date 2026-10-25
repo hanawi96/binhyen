@@ -13,6 +13,8 @@
     leaving?: boolean;
     onRead?: () => void;
     actions?: Snippet;
+    /** Nội dung dưới «Đọc thêm» (vd. pager bộ sưu tập). */
+    below?: Snippet;
   }
 
   let {
@@ -20,7 +22,8 @@
     active = false,
     leaving = false,
     onRead,
-    actions
+    actions,
+    below
   }: Props = $props();
 
   let videoEl = $state<HTMLVideoElement | null>(null);
@@ -92,6 +95,7 @@
 <article
   class="stage reading"
   class:media={mediaMode}
+  class:poll={showPoll}
   class:out={leaving}
   aria-labelledby={`content-title-${content.id}`}
 >
@@ -166,6 +170,12 @@
       Đọc thêm ↗
     </button>
   {/if}
+
+  {#if below}
+    <div class="card-below">
+      {@render below()}
+    </div>
+  {/if}
 </article>
 
 <style>
@@ -187,9 +197,10 @@
   }
 
   .stage.media {
-    /* Ảnh co trước; tiêu đề không bị stage cắt chân chữ. */
+    /* Ảnh/poll co trước; tiêu đề không bị stage cắt chân chữ. */
+    --content-gap: 14px;
     justify-content: center;
-    gap: 14px;
+    gap: 0;
     padding-bottom: 20px;
   }
 
@@ -204,9 +215,14 @@
     padding-inline: 4px;
   }
 
-  /* Media: khoảng cách do gap của stage. */
-  .stage.media .card-actions {
-    margin-bottom: 0;
+  /* Media/poll: icon → khối nội dung = nội dung → Đọc thêm (--chrome-gap). */
+  .stage.media .frame,
+  .stage.media :global(.poll) {
+    margin: 0;
+  }
+
+  .stage.media .headline.under-media {
+    margin-top: var(--content-gap);
   }
 
   @media (min-width: 641px) {
@@ -341,8 +357,24 @@
     font-weight: 700;
   }
 
-  .stage.media .readmore {
-    margin-top: 0;
+  /* Poll cao: giới hạn khối lựa chọn để cụm vẫn căn giữa cân. */
+  .stage.poll :global(.poll) {
+    flex: 0 1 auto;
+    max-height: min(42dvh, 100%);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .card-below {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    margin-top: 0.85rem;
+  }
+
+  .card-below:empty {
+    display: none;
   }
 
   @media (max-width: 640px) {

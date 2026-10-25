@@ -20,6 +20,7 @@
     initialNotice = null,
     initialUser,
     initialPostNews = 0,
+    initialTopics = [],
     collection = null
   }: {
     initialItems?: ContentItem[];
@@ -29,6 +30,7 @@
     initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
+    initialTopics?: Array<{ slug: string; label: string }>;
     collection?: CollectionView | null;
   } = $props();
 </script>
@@ -42,6 +44,7 @@
     {initialNotice}
     {initialUser}
     {initialPostNews}
+    {initialTopics}
     {collection}
   />
 </div>

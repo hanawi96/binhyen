@@ -1,11 +1,10 @@
 import { CONTENT_ID_PATTERN } from "../admin/admin-http";
+import { isCatalogSlug } from "../admin/catalog";
 import {
   isContentKind,
   isContentTheme,
-  isContentTopic,
   type ContentKind,
-  type ContentTheme,
-  type ContentTopic
+  type ContentTheme
 } from "../content/content.types";
 import {
   isMoodFilter,
@@ -60,7 +59,7 @@ export interface RingCursor {
   topic: TopicFilter;
   mood: MoodFilter;
   /** Chu de yeu thich, chot tu trang dau de ca phien on dinh. */
-  favorites: ContentTopic[];
+  favorites: string[];
   origin: number;
   /** Chot luc tao cursor de cac trang cung mot ranh gioi; null la khong co lan bai moi. */
   freshAt: number | null;
@@ -127,10 +126,12 @@ export function randomOrigin(): number {
 function cleanFavorites(
   topic: TopicFilter,
   mood: MoodFilter,
-  favorites: readonly ContentTopic[]
-): ContentTopic[] {
+  favorites: readonly string[]
+): string[] {
   if (topic !== "all" || mood !== "all") return [];
-  return [...new Set(favorites)].sort().slice(0, MAX_FAVORITES);
+  return [...new Set(favorites.filter(isCatalogSlug))]
+    .sort()
+    .slice(0, MAX_FAVORITES);
 }
 
 /**
@@ -140,7 +141,7 @@ function cleanFavorites(
 export function activeLanes(
   topic: TopicFilter,
   mood: MoodFilter,
-  favorites: readonly ContentTopic[]
+  favorites: readonly string[]
 ): Record<FeedBucket, boolean> {
   const topicOn = topic !== "all" || favorites.length > 0;
   const moodOn = mood !== "all";
@@ -157,7 +158,7 @@ export function startRingCursor(input: {
   mood: MoodFilter;
   origin: number;
   freshAt: number | null;
-  favorites?: readonly ContentTopic[];
+  favorites?: readonly string[];
 }): RingCursor {
   if (
     !isRankKey(input.origin) ||
@@ -524,8 +525,11 @@ function decodeFreshMark(at: string, id: string): FreshMark | null {
   return { mode: "after", publishedAt, id };
 }
 
+/** Khớp slug catalog (peace, cong-nghe, …). */
+const TOPIC_TOKEN = "[a-z0-9]+(?:-[a-z0-9]+)*";
+
 const RING_CURSOR_PATTERN = new RegExp(
-  "^v6:([a-z]+):([a-z]+):(-|[a-z]+(?:\\.[a-z]+)*):(\\d{1,10}):(-|\\d{1,12}):(\\d{1,9})" +
+  `^v6:(${TOPIC_TOKEN}):([a-z]+):(-|${TOPIC_TOKEN}(?:\\.${TOPIC_TOKEN})*):(\\d{1,10}):(-|\\d{1,12}):(\\d{1,9})` +
     ":([^:]+):([^:]+)".repeat(4) +
     ":([a-z]+|-):([a-z]+|-)$"
 );
@@ -557,7 +561,7 @@ export function decodeRingCursor(value: string): RingCursor | null {
 
   const favoriteParts =
     favoriteToken === "-" ? [] : favoriteToken.split(".");
-  const favorites = favoriteParts.filter(isContentTopic);
+  const favorites = favoriteParts.filter(isCatalogSlug);
 
   if (
     favorites.length !== favoriteParts.length ||

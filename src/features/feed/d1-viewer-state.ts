@@ -1,6 +1,6 @@
 import { hashSessionToken, readSessionToken } from "../account/account";
 import { readActorId } from "../actor/actor";
-import { isContentTopic, type ContentTopic } from "../content/content.types";
+import { isCatalogSlug } from "../admin/catalog";
 import { mergeViewerStates } from "./merge-viewer-state";
 import { markSeen, seenBlob, toSeenBits } from "./seen-bits";
 import {
@@ -28,7 +28,7 @@ export interface FeedViewer {
   key: string | null;
   userId: string | null;
   actorId: string | null;
-  favorites: ContentTopic[];
+  favorites: string[];
   state: ViewerState | null;
 }
 
@@ -76,13 +76,13 @@ export function toViewerState(row: ViewerStateRow): ViewerState {
   };
 }
 
-function readTopics(json: string | undefined): ContentTopic[] {
+function readTopics(json: string | undefined): string[] {
   try {
     const value: unknown = JSON.parse(json ?? "[]");
     return Array.isArray(value)
       ? value.filter(
-          (topic): topic is ContentTopic =>
-            typeof topic === "string" && isContentTopic(topic)
+          (topic): topic is string =>
+            typeof topic === "string" && isCatalogSlug(topic)
         )
       : [];
   } catch {

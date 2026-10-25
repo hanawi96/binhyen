@@ -67,7 +67,7 @@ describe("viewer positions", () => {
     const parsed = parsePositions(
       JSON.stringify({
         "all:all": "v6:ok",
-        "unknown:all": "v6:x",
+        "Bad_Topic:all": "v6:x",
         "all:all:extra": "v6:x",
         "peace:sad": 42,
         "nature:all": ""
