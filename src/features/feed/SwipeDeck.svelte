@@ -26,6 +26,7 @@
   import { isTopicFilter } from "../content/filter-contents";
   import AmbientPanel from "../ambient/AmbientPanel.svelte";
   import ThemeToggle from "../theme/ThemeToggle.svelte";
+  import GlassPending from "../sheet/GlassPending.svelte";
   import {
     invalidateMine,
     prefetchMine,
@@ -861,6 +862,13 @@
       });
   }
 
+  // Prefetch ba sheet luc ranh, khong canh tranh voi feed.
+  function warmAllSheets() {
+    warmMine();
+    warmAccount();
+    warmWrite();
+  }
+
   // Moi ngan chiem mot muc lich su de nut Back dong ngan.
   function showSheet(which: "mine" | "account" | "write") {
     const replace = sheetOpen;
@@ -875,48 +883,40 @@
     }
   }
 
-  async function showMine(tab: "post" | null) {
+  // Mo kinh ngay; chunk den sau thi hydrate (GlassPending truoc do).
+  function showMine(tab: "post" | null) {
     if (mineOpen || reading) return;
 
     mineTab = tab;
     warmMine();
-    await mineCode;
-    if (!MineSheet || mineOpen) return;
-
     showSheet("mine");
   }
 
   function openMine() {
-    void showMine(postNews > 0 ? "post" : null);
+    showMine(postNews > 0 ? "post" : null);
   }
 
   function openMinePosts() {
-    void showMine("post");
+    showMine("post");
   }
 
-  async function openAccount() {
+  function openAccount() {
     if (accountOpen || reading) return;
 
     warmAccount();
-    await accountCode;
-    if (!AccountSheet || accountOpen) return;
-
     showSheet("account");
   }
 
-  async function showWrite(edit: { id: string; serial: number } | null) {
+  function showWrite(edit: { id: string; serial: number } | null) {
     if (writeOpen || reading) return;
 
-    warmWrite();
-    await writeCode;
-    if (!WriteSheet || writeOpen) return;
-
     writeEdit = edit;
+    warmWrite();
     showSheet("write");
   }
 
   function openWrite() {
-    void showWrite(null);
+    showWrite(null);
   }
 
   function editPost(item: MinePost) {
@@ -2597,9 +2597,34 @@
     );
     measureDeck();
 
+    // Prefetch sheet sau khi feed da on; timeout dam bao van chay neu khong idle.
+    let idleHandle: number | null = null;
+    let idleTimer = 0;
+    const scheduleIdle =
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback.bind(window)
+        : null;
+    const cancelIdle =
+      typeof window.cancelIdleCallback === "function"
+        ? window.cancelIdleCallback.bind(window)
+        : null;
+
+    if (scheduleIdle) {
+      idleHandle = scheduleIdle(
+        () => {
+          warmAllSheets();
+        },
+        { timeout: 2500 }
+      );
+    } else {
+      idleTimer = window.setTimeout(warmAllSheets, 1400);
+    }
+
     return () => {
       seenReporter.flushOnLeave();
       window.clearTimeout(meTimer);
+      if (idleHandle !== null && cancelIdle) cancelIdle(idleHandle);
+      window.clearTimeout(idleTimer);
       themeObserver.disconnect();
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("popstate", handlePopState);
@@ -2783,6 +2808,7 @@
         aria-expanded={mineOpen}
         aria-label={postNews > 0 ? "Của tôi, có kết quả duyệt bài mới" : undefined}
         onpointerdown={warmMine}
+        onmouseenter={warmMine}
         onclick={openMine}
       >
         <span class="dock-icon">
@@ -2803,6 +2829,7 @@
         aria-haspopup="dialog"
         aria-expanded={writeOpen}
         onpointerdown={warmWrite}
+        onmouseenter={warmWrite}
         onclick={openWrite}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2825,6 +2852,7 @@
         aria-haspopup="dialog"
         aria-expanded={accountOpen}
         onpointerdown={warmAccount}
+        onmouseenter={warmAccount}
         onclick={openAccount}
       >
         {#if user}
@@ -3151,6 +3179,13 @@
       onSetReaction={setMineReaction}
       onEditPost={editPost}
     />
+  {:else if mineOpen}
+    <GlassPending
+      open
+      title="Của tôi"
+      eyebrow="Không gian riêng"
+      onClose={closeSheet}
+    />
   {/if}
 
   {#if WriteSheet}
@@ -3165,6 +3200,13 @@
       onSaved={() => (postsVersion += 1)}
       onOpenPosts={openMinePosts}
     />
+  {:else if writeOpen}
+    <GlassPending
+      open
+      title={writeEdit ? "Sửa bài" : "Viết bài"}
+      eyebrow={writeEdit ? "Chỉnh sửa bản nháp" : "Một khoảng yên để viết"}
+      onClose={closeSheet}
+    />
   {/if}
 
   {#if AccountSheet}
@@ -3177,6 +3219,13 @@
       {onSignedOut}
       onOpenMine={openMine}
       {onProfileSaved}
+    />
+  {:else if accountOpen}
+    <GlassPending
+      open
+      title="Tài khoản"
+      eyebrow="Không gian cá nhân"
+      onClose={closeSheet}
     />
   {/if}
 </div>
@@ -4072,30 +4121,7 @@
       transform 200ms ease !important;
   }
 
-  /* Không gian kính (Của tôi / Tài khoản): feed lùi sâu, vẫn thấy phía sau. */
-  .swipe-deck .atmosphere,
-  .swipe-deck .deck-viewport,
-  .swipe-deck .collection-pager-bar,
-  .swipe-deck .read-rail--card {
-    transition:
-      filter 380ms ease,
-      transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 320ms ease;
-  }
-
-  .swipe-deck.is-glass-open .atmosphere {
-    transform: scale(1.04);
-    filter: saturate(1.08);
-  }
-
-  .swipe-deck.is-glass-open .deck-viewport,
-  .swipe-deck.is-glass-open .collection-pager-bar,
-  .swipe-deck.is-glass-open .read-rail--card {
-    filter: blur(10px);
-    transform: scale(1.03);
-    opacity: 0.55;
-  }
-
+  /* Không gian kính: veil sheet tự mờ nền; chỉ ẩn chrome để khỏi đè kính. */
   .swipe-deck.is-glass-open .topbar,
   .swipe-deck.is-glass-open .bottom {
     opacity: 0;
