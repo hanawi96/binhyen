@@ -81,13 +81,9 @@ export function createD1MyReactionStore(db: D1Database): MyReactionStore {
     async counts(actorId): Promise<MyReactionCounts> {
       const row = await db
         .prepare(
-          `SELECT
-             SUM(r.kind = 'like') AS liked,
-             SUM(r.kind = 'save') AS saved
-           FROM content_reactions r
-           JOIN contents c
-             ON c.id = r.content_id AND c.status = 'published'
-           WHERE r.actor_id = ?1`
+          `SELECT liked_count AS liked, saved_count AS saved
+           FROM actor_reaction_counts
+           WHERE actor_id = ?1`
         )
         .bind(actorId)
         .first<CountRow>();

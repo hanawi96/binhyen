@@ -369,6 +369,8 @@
     z-index: 8;
     display: grid;
     place-items: stretch;
+    min-height: 0;
+    overflow: hidden;
     pointer-events: none;
     visibility: hidden;
     opacity: 0;
@@ -406,6 +408,8 @@
     width: 100%;
     height: 100%;
     max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
     margin: 0 auto;
     outline: none;
     transform: translateY(10px);
@@ -503,6 +507,16 @@
     gap: 8px;
   }
 
+  .write-field-lead {
+    gap: 6px;
+  }
+
+  /* Câu chữ chính → nội dung liền mạch, không gạch ngăn. */
+  .write-field-body {
+    margin-top: -10px;
+    gap: 6px;
+  }
+
   .write-field > span:first-child,
   .write-field > label {
     color: color-mix(in oklab, var(--color-text) 58%, transparent);
@@ -516,8 +530,6 @@
     width: 100%;
     padding: 10px 0;
     border: 0;
-    border-bottom: 1px solid
-      color-mix(in oklab, var(--color-text) 12%, transparent);
     border-radius: 0;
     background: transparent;
     color: var(--color-text);
@@ -530,11 +542,7 @@
 
   .write-field .write-lead {
     min-height: 4.2em;
-    border-bottom-color: color-mix(
-      in oklab,
-      var(--color-text) 18%,
-      transparent
-    );
+    padding-bottom: 4px;
     font-family: var(--font-editorial);
     font-size: clamp(1.45rem, 4.5vw, 1.85rem);
     line-height: 1.35;
@@ -544,31 +552,13 @@
 
   .write-field .write-prose {
     min-height: 12em;
-    padding: 18px 20px;
-    border: 1px solid color-mix(in oklab, var(--color-text) 10%, transparent);
-    border-radius: 22px;
-    background: color-mix(in oklab, var(--color-surface) 38%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    padding: 4px 0 12px;
     resize: vertical;
   }
 
   .write-field input:focus,
   .write-field textarea:focus {
-    border-bottom-color: color-mix(
-      in oklab,
-      var(--color-primary) 65%,
-      transparent
-    );
-  }
-
-  .write-field .write-prose:focus {
-    border-color: color-mix(in oklab, var(--color-primary) 45%, transparent);
-    border-bottom-color: color-mix(
-      in oklab,
-      var(--color-primary) 45%,
-      transparent
-    );
+    outline: none;
   }
 
   .write-field input::placeholder,
@@ -729,11 +719,6 @@
 
     .write-body {
       padding: 8px 18px max(28px, env(safe-area-inset-bottom));
-    }
-
-    .write-field .write-prose {
-      padding: 16px;
-      border-radius: 18px;
     }
   }
 </style>

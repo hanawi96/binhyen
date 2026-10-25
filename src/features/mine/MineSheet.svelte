@@ -1,10 +1,15 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import ProfileSettings from "../account/ProfileSettings.svelte";
+  import { signOut, type AccountUser } from "../account/account-client";
   import {
+    invalidateMinePosts,
     loadMinePage,
     loadMinePosts,
+    markMinePostsSeen,
     mineGeneration,
     prefetchMine,
+    prefetchMinePosts,
     withdrawPost,
     type MineCounts,
     type MineItem,
@@ -13,7 +18,7 @@
     type MinePost
   } from "./mine-client";
 
-  type Tab = MineKind | "post";
+  type Tab = MineKind | "post" | "settings";
   type ListState<T = MineItem> = {
     items: T[];
     next: string | null;
@@ -25,6 +30,8 @@
     open,
     reading,
     signedIn,
+    user,
+    userKnown,
     postsVersion,
     postNews,
     onPostsSeen,
@@ -33,11 +40,16 @@
     onClose,
     onOpenItem,
     onSetReaction,
-    onEditPost
+    onEditPost,
+    onSignIn,
+    onProfileSaved,
+    onSignedOut
   }: {
     open: boolean;
     reading: boolean;
     signedIn: boolean;
+    user: AccountUser | null;
+    userKnown: boolean;
     /** Tang len khi vua viet bai, de tai lai "Da viet". */
     postsVersion: number;
     /** So bai vua co ket qua duyet ma chua xem. */
@@ -51,12 +63,16 @@
     onOpenItem: (item: MineOpenable) => void;
     onSetReaction: (item: MineItem, kind: MineKind, on: boolean) => void;
     onEditPost: (item: MinePost) => void;
+    onSignIn: () => void;
+    onProfileSaved: (user: AccountUser, topicsChanged: boolean) => void;
+    onSignedOut: () => void;
   } = $props();
 
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: "like", label: "Đã thích" },
     { key: "save", label: "Đã lưu" },
-    { key: "post", label: "Đã viết" }
+    { key: "post", label: "Đã viết" },
+    { key: "settings", label: "Cài đặt" }
   ];
   const EMPTY_TEXT: Record<MineKind, string> = {
     like: "Chưa có bài nào bạn thích. Chạm ♡ khi một điều chạm đến bạn.",
@@ -135,6 +151,18 @@
   let body = $state<HTMLElement | null>(null);
   let sentinel = $state<HTMLElement | null>(null);
   let swipeStart: { x: number; y: number } | null = null;
+  let signingOut = $state(false);
+  let signOutError = $state("");
+
+  async function leave() {
+    if (signingOut) return;
+    signingOut = true;
+    signOutError = "";
+    const ok = await signOut();
+    signingOut = false;
+    if (ok) onSignedOut();
+    else signOutError = "Chưa đăng xuất được. Hãy thử lại.";
+  }
 
   function ago(seconds: number): string {
     const diff = Math.round(seconds - Date.now() / 1000);
@@ -156,6 +184,14 @@
     return kind === "like" ? !state.liked : !state.saved;
   }
 
+  /** Sentinel da trong khung (san khau ngan) — tai them cho kip. */
+  function sentinelInView(): boolean {
+    if (!body || !sentinel) return false;
+    const root = body.getBoundingClientRect();
+    const tip = sentinel.getBoundingClientRect();
+    return tip.top <= root.bottom + 320;
+  }
+
   function ensure(kind: MineKind) {
     const list = lists[kind];
     if (list.status === "loading" || list.status === "ready") return;
@@ -175,6 +211,7 @@
         more: false
       };
       if (page.counts) counts = page.counts;
+      queueMicrotask(() => fill(kind));
     });
   }
 
@@ -198,7 +235,15 @@
         ...page.items.filter((item) => !known.has(item.id))
       ];
       current.next = page.nextCursor;
+      queueMicrotask(() => fill(kind));
     });
+  }
+
+  /** Day danh sach den khi kin khung hoac het trang. */
+  function fill(kind: MineKind) {
+    if (tab !== kind) return;
+    if (!sentinelInView()) return;
+    loadMore(kind);
   }
 
   function ensurePosts() {
@@ -207,7 +252,7 @@
     posts.status = "loading";
     const epoch = postEpoch;
 
-    void loadMinePosts(null).then((page) => {
+    void prefetchMinePosts().then((page) => {
       if (epoch !== postEpoch) return;
       if (!page) {
         posts.status = "error";
@@ -221,8 +266,17 @@
         more: false
       };
       postTotal = page.total;
-      onPostsSeen();
+      queueMicrotask(() => fillPosts());
     });
+  }
+
+  let postsSeenEpoch = -1;
+
+  function confirmPostsSeen() {
+    if (postsSeenEpoch === postEpoch) return;
+    postsSeenEpoch = postEpoch;
+    onPostsSeen();
+    void markMinePostsSeen();
   }
 
   function loadMorePosts() {
@@ -243,7 +297,14 @@
         ...page.items.filter((item) => !known.has(item.id))
       ];
       posts.next = page.nextCursor;
+      queueMicrotask(() => fillPosts());
     });
+  }
+
+  function fillPosts() {
+    if (tab !== "post" || !signedIn) return;
+    if (!sentinelInView()) return;
+    loadMorePosts();
   }
 
   async function withdraw(item: MinePost) {
@@ -293,6 +354,7 @@
     if (key === postOwner) return;
     postOwner = key;
     postEpoch += 1;
+    invalidateMinePosts();
     posts = freshList();
     postTotal = null;
   });
@@ -303,23 +365,38 @@
 
   $effect(() => {
     if (!open) return;
-    if (tab !== "post") ensure(tab);
-    else if (signedIn) ensurePosts();
+    // Tai san like + save + posts — doi tab chi swap list da ready.
+    ensure("like");
+    ensure("save");
+    if (signedIn) ensurePosts();
   });
 
   $effect(() => {
-    if (!body || !sentinel) return;
+    if (!open || tab !== "post" || !signedIn) return;
+    if (posts.status !== "ready") return;
+    confirmPostsSeen();
+  });
+
+  $effect(() => {
+    if (!open || !body || !sentinel) return;
+    if (tab === "settings") return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
-        if (tab !== "post") loadMore(tab);
-        else if (signedIn) loadMorePosts();
+        if (tab === "like" || tab === "save") fill(tab);
+        else if (tab === "post" && signedIn) fillPosts();
       },
       { root: body, rootMargin: "320px 0px" }
     );
 
     observer.observe(sentinel);
+    // Trang dau vua xong ma sentinel da trong khung: observer co the khong ban lai.
+    queueMicrotask(() => {
+      if (tab === "like" || tab === "save") fill(tab);
+      else if (tab === "post" && signedIn) fillPosts();
+    });
+
     return () => observer.disconnect();
   });
 
@@ -429,7 +506,47 @@
     onpointerup={onBodyUp}
     onpointercancel={() => (swipeStart = null)}
   >
-    {#if tab === "post" && !signedIn}
+    {#if tab === "settings"}
+      {#if !userKnown}
+        <ul class="mine-list" aria-hidden="true">
+          {#each [0, 1, 2] as index (index)}
+            <li class="mine-row mine-ghost">
+              <span></span>
+              <span></span>
+            </li>
+          {/each}
+        </ul>
+      {:else if user}
+        <div class="mine-settings">
+          <ProfileSettings
+            {user}
+            active={open && tab === "settings"}
+            onSaved={onProfileSaved}
+          />
+          <p class="mine-soft mine-signout-error" aria-live="polite">
+            {signOutError}
+          </p>
+          <button
+            type="button"
+            class="mine-signout"
+            disabled={signingOut}
+            onclick={leave}
+          >
+            {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+          </button>
+        </div>
+      {:else}
+        <div class="mine-note">
+          <p>Đăng nhập để xem hồ sơ và chủ đề của bạn.</p>
+          <p class="mine-soft">
+            Tên hiển thị và chủ đề giúp Bình Yên hiểu bạn hơn.
+          </p>
+          <button type="button" class="mine-retry" onclick={onSignIn}>
+            Đăng nhập
+          </button>
+        </div>
+      {/if}
+    {:else if tab === "post" && !signedIn}
       <div class="mine-note">
         <p>Bài bạn viết sẽ nằm ở đây.</p>
         <p class="mine-soft">
@@ -444,6 +561,7 @@
             type="button"
             class="mine-retry"
             onclick={() => {
+              invalidateMinePosts();
               posts = freshList();
               ensurePosts();
             }}
@@ -452,14 +570,7 @@
           </button>
         </div>
       {:else if posts.status !== "ready"}
-        <ul class="mine-list" aria-hidden="true">
-          {#each [0, 1, 2, 3] as index (index)}
-            <li class="mine-row mine-ghost">
-              <span></span>
-              <span></span>
-            </li>
-          {/each}
-        </ul>
+        <!-- Khong skeleton: warm/ensure san, tranh nhay khi doi tab. -->
       {:else if posts.items.length === 0}
         <div class="mine-note">
           <p>Bạn chưa viết bài nào.</p>
@@ -562,14 +673,7 @@
           </button>
         </div>
       {:else if list.status !== "ready"}
-        <ul class="mine-list" aria-hidden="true">
-          {#each [0, 1, 2, 3] as index (index)}
-            <li class="mine-row mine-ghost">
-              <span></span>
-              <span></span>
-            </li>
-          {/each}
-        </ul>
+        <!-- Khong skeleton: warm/ensure san, tranh nhay khi doi tab. -->
       {:else if list.items.length === 0}
         <div class="mine-note">
           <p>{EMPTY_TEXT[kind]}</p>
@@ -639,6 +743,8 @@
     z-index: 8;
     display: grid;
     place-items: stretch;
+    min-height: 0;
+    overflow: hidden;
     pointer-events: none;
     visibility: hidden;
     opacity: 0;
@@ -681,6 +787,8 @@
     width: 100%;
     height: 100%;
     max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
     margin: 0 auto;
     outline: none;
     transform: translateY(10px);
@@ -839,6 +947,36 @@
       #000 calc(100% - 28px),
       transparent
     );
+  }
+
+  .mine-settings {
+    padding: 8px 0 12px;
+  }
+
+  .mine-signout {
+    display: block;
+    margin: 18px auto 0;
+    padding: 10px 14px;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 14px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  .mine-signout:disabled {
+    opacity: 0.7;
+    cursor: default;
+  }
+
+  .mine-signout-error {
+    min-height: 18px;
+    margin: 12px 0 0;
+    color: var(--color-error);
+    text-align: center;
   }
 
   .mine-list {

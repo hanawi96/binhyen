@@ -174,10 +174,12 @@ export function readMinePostPage(value: unknown): MinePostPage | null {
 }
 
 export async function loadMinePosts(
-  cursor: string | null
+  cursor: string | null,
+  options?: { peek?: boolean }
 ): Promise<MinePostPage | null> {
   const params = new URLSearchParams();
   if (cursor) params.set("cursor", cursor);
+  if (options?.peek) params.set("peek", "1");
 
   try {
     const response = await fetch(`/api/me/posts?${params}`);
@@ -186,6 +188,32 @@ export async function loadMinePosts(
   } catch {
     return null;
   }
+}
+
+let firstPosts: Promise<MinePostPage | null> | null = null;
+
+/** Warm trang dau "Da viet" (peek — khong xoa cham postNews). */
+export function prefetchMinePosts(): Promise<MinePostPage | null> {
+  if (!firstPosts) {
+    firstPosts = loadMinePosts(null, { peek: true }).then((result) => {
+      if (!result) firstPosts = null;
+      return result;
+    });
+  }
+  return firstPosts;
+}
+
+/** Xac nhan da xem tab Da viet — cap nhat posts_seen_at tren may chu. */
+export async function markMinePostsSeen(): Promise<void> {
+  try {
+    await fetch("/api/me/posts?limit=1", { cache: "no-store" });
+  } catch {
+    /* bo qua */
+  }
+}
+
+export function invalidateMinePosts(): void {
+  firstPosts = null;
 }
 
 export interface PostFields {
@@ -349,9 +377,82 @@ export function prefetchMine(kind: MineKind): Promise<MinePage | null> {
   return page;
 }
 
-/** Sau moi lan thich / luu, lan mo ngan ke tiep se tai lai. */
+function bumpCounts(counts: MineCounts, kind: MineKind, on: boolean): MineCounts {
+  const step = on ? 1 : -1;
+  return kind === "like"
+    ? { ...counts, liked: Math.max(0, counts.liked + step) }
+    : { ...counts, saved: Math.max(0, counts.saved + step) };
+}
+
+function patchPage(
+  page: MinePage,
+  kind: MineKind,
+  on: boolean,
+  item: MineOpenable
+): MinePage {
+  const counts = page.counts ? bumpCounts(page.counts, kind, on) : page.counts;
+  const reactedAt = Math.floor(Date.now() / 1000);
+
+  if (on) {
+    const entry: MineItem = {
+      id: item.id,
+      title: item.title,
+      category: item.category,
+      description: item.description,
+      theme: item.theme,
+      reactedAt
+    };
+    const items = [
+      entry,
+      ...page.items.filter((row) => row.id !== item.id)
+    ];
+    return { ...page, items, counts };
+  }
+
+  return {
+    ...page,
+    items: page.items.filter((row) => row.id !== item.id),
+    counts
+  };
+}
+
+/**
+ * Sau thich/luu: giu cache trang dau (sua tai cho), chi bump generation
+ * de MineSheet nhan ban cap nhat tu prefetch — khong fetch lai neu da warm.
+ */
+export function syncMineReaction(
+  kind: MineKind,
+  on: boolean,
+  item: MineOpenable
+): void {
+  const cached = firstPages.get(kind);
+  if (cached) {
+    firstPages.set(
+      kind,
+      cached.then((page) => (page ? patchPage(page, kind, on, item) : page))
+    );
+  }
+
+  const other: MineKind = kind === "like" ? "save" : "like";
+  const otherCached = firstPages.get(other);
+  if (otherCached) {
+    firstPages.set(
+      other,
+      otherCached.then((page) =>
+        page?.counts
+          ? { ...page, counts: bumpCounts(page.counts, kind, on) }
+          : page
+      )
+    );
+  }
+
+  generation += 1;
+}
+
+/** Dang nhap / dang xuat: bo toan bo cache. */
 export function invalidateMine() {
   firstPages.clear();
+  firstPosts = null;
   generation += 1;
 }
 

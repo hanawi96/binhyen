@@ -29,6 +29,8 @@
   import {
     invalidateMine,
     prefetchMine,
+    prefetchMinePosts,
+    syncMineReaction,
     type MineItem,
     type MineKind,
     type MineOpenable,
@@ -699,7 +701,8 @@
   async function setReaction(
     id: string,
     kind: "like" | "save",
-    on: boolean
+    on: boolean,
+    known?: MineOpenable
   ) {
     const before =
       reactions[id] ??
@@ -732,8 +735,28 @@
     const serial = ++writeSerial;
     lastWrite[id] = serial;
 
+    const wasOn = kind === "like" ? before.liked : before.saved;
     const state = await sendInteraction(id, "reactions", { kind, on });
-    if (state) invalidateMine();
+    if (state) {
+      const nowOn = kind === "like" ? state.liked : state.saved;
+      if (wasOn !== nowOn) {
+        const card =
+          known ??
+          contents.find((entry) => entry.id === id) ??
+          (readItem?.id === id ? readItem : null);
+        if (card) {
+          syncMineReaction(kind, nowOn, {
+            id: card.id,
+            title: card.title,
+            category: card.category,
+            description: card.description,
+            theme: card.theme
+          });
+        } else {
+          invalidateMine();
+        }
+      }
+    }
     if (lastWrite[id] !== serial) return;
 
     reactions[id] = state ?? set(!on);
@@ -792,7 +815,7 @@
   let mineOpen = $state(false);
   let accountOpen = $state(false);
   let writeOpen = $state(false);
-  let mineTab = $state<"post" | null>(null);
+  let mineTab = $state<"post" | "settings" | null>(null);
   let writeEdit = $state<{ id: string; serial: number } | null>(null);
   let editSerial = 0;
   let postsVersion = $state(0);
@@ -810,10 +833,6 @@
   let postNews = $state(initialPostNews);
   let meLoad: Promise<void> | null = null;
   let sheetOpen = $derived(mineOpen || accountOpen || writeOpen);
-  let userInitial = $derived(
-    (user?.displayName.trim().charAt(0) || "·").toLocaleUpperCase("vi")
-  );
-
   function ensureMe() {
     if (userKnown) return;
     meLoad ??= fetchMe()
@@ -829,8 +848,10 @@
 
   function warmMine() {
     ensureMe();
-    // Khách chưa đăng nhập: bỏ prefetch /me/reactions lúc warm.
-    if (user) void prefetchMine("like");
+    // Warm like/save/posts de doi tab khong nhay skeleton.
+    void prefetchMine("like");
+    void prefetchMine("save");
+    if (user) void prefetchMinePosts();
     mineCode ??= import("../mine/MineSheet.svelte")
       .then((module) => {
         MineSheet = module.default;
@@ -877,7 +898,7 @@
   }
 
   // Mo kinh ngay; chunk den sau thi hydrate (GlassPending truoc do).
-  function showMine(tab: "post" | null) {
+  function showMine(tab: "post" | "settings" | null) {
     if (mineOpen || reading) return;
 
     mineTab = tab;
@@ -893,8 +914,18 @@
     showMine("post");
   }
 
+  function openMineSettings() {
+    showMine("settings");
+  }
+
+  /** Chi mo sheet dang nhap cho khach; da dang nhap thi vao Cài đặt. */
   function openAccount() {
-    if (accountOpen || reading) return;
+    if (reading) return;
+    if (user) {
+      openMineSettings();
+      return;
+    }
+    if (accountOpen) return;
 
     warmAccount();
     showSheet("account");
@@ -984,7 +1015,7 @@
   }
 
   function setMineReaction(item: MineItem, kind: MineKind, on: boolean) {
-    void setReaction(item.id, kind, on);
+    void setReaction(item.id, kind, on, item);
   }
 
   // Cap nhat so rail: doi the thi truot; chua co data thi giu so cu (khong an).
@@ -2759,6 +2790,8 @@
         open={mineOpen}
         {reading}
         signedIn={user !== null}
+        {user}
+        {userKnown}
         {postsVersion}
         {postNews}
         onPostsSeen={() => (postNews = 0)}
@@ -2768,6 +2801,9 @@
         onOpenItem={openMineItem}
         onSetReaction={setMineReaction}
         onEditPost={editPost}
+        onSignIn={openAccount}
+        {onProfileSaved}
+        {onSignedOut}
       />
     {:else if mineOpen}
       <GlassPending
@@ -2802,18 +2838,14 @@
     {#if AccountSheet}
       <AccountSheet
         open={accountOpen}
-        {user}
         {userKnown}
         onClose={closeSheet}
         {onSignedIn}
-        {onSignedOut}
-        onOpenMine={openMine}
-        {onProfileSaved}
       />
     {:else if accountOpen}
       <GlassPending
         open
-        title="Tài khoản"
+        title="Đăng nhập"
         eyebrow="Không gian cá nhân"
         onClose={closeSheet}
       />
@@ -2879,27 +2911,6 @@
           <path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16" />
         </svg>
         <span>Hành trình</span>
-      </button>
-      <button
-        type="button"
-        class="dock-item dock-account"
-        aria-label={user ? `Tài khoản: ${user.displayName}` : "Tài khoản"}
-        aria-haspopup="dialog"
-        aria-expanded={accountOpen}
-        onpointerdown={warmAccount}
-        onmouseenter={warmAccount}
-        onclick={openAccount}
-      >
-        {#if user}
-          <span class="dock-avatar" aria-hidden="true">{userInitial}</span>
-        {:else}
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
-            />
-          </svg>
-        {/if}
-        <span>{user?.displayName?.trim() || "Tài khoản"}</span>
       </button>
     </nav>
   </footer>
@@ -3956,20 +3967,6 @@
     color: #f0c94a;
   }
 
-  .dock-account .dock-avatar {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border: 1.5px solid currentColor;
-    border-radius: 50%;
-    color: var(--color-text);
-    font-family: var(--font-editorial);
-    font-size: 12px;
-    line-height: 1;
-    letter-spacing: 0;
-  }
-
   .dock svg {
     width: 22px;
     height: 22px;
@@ -4044,12 +4041,6 @@
 
     .dock .dock-item {
       min-width: 58px;
-    }
-  }
-
-  @media (max-width: 360px) {
-    .dock-account span {
-      display: none;
     }
   }
 

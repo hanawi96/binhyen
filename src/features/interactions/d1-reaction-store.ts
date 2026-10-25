@@ -108,7 +108,23 @@ export function createD1ReactionStore(db: D1Database): ReactionStore {
                    ${column} = ${column} + 1,
                    updated_at = excluded.updated_at`
               )
-              .bind(contentId, now)
+              .bind(contentId, now),
+            db
+              .prepare(
+                `INSERT INTO actor_reaction_counts
+                   (actor_id, liked_count, saved_count, updated_at)
+                 SELECT
+                   ?1,
+                   CASE WHEN ?2 = 'like' THEN 1 ELSE 0 END,
+                   CASE WHEN ?2 = 'save' THEN 1 ELSE 0 END,
+                   ?3
+                 WHERE changes() > 0
+                 ON CONFLICT (actor_id) DO UPDATE SET
+                   liked_count = liked_count + excluded.liked_count,
+                   saved_count = saved_count + excluded.saved_count,
+                   updated_at = excluded.updated_at`
+              )
+              .bind(actorId, kind, now)
           ]
         : [
             db
@@ -126,7 +142,24 @@ export function createD1ReactionStore(db: D1Database): ReactionStore {
                    AND ${column} > 0
                    AND changes() > 0`
               )
-              .bind(contentId, now)
+              .bind(contentId, now),
+            db
+              .prepare(
+                `UPDATE actor_reaction_counts
+                 SET
+                   liked_count = CASE
+                     WHEN ?2 = 'like' AND liked_count > 0 THEN liked_count - 1
+                     ELSE liked_count
+                   END,
+                   saved_count = CASE
+                     WHEN ?2 = 'save' AND saved_count > 0 THEN saved_count - 1
+                     ELSE saved_count
+                   END,
+                   updated_at = ?3
+                 WHERE actor_id = ?1
+                   AND changes() > 0`
+              )
+              .bind(actorId, kind, now)
           ];
 
       return runWithState(writes, contentId, actorId);

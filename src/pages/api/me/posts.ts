@@ -61,12 +61,13 @@ export const GET: APIRoute = async ({ request, url }) => {
 
     const store = createD1MyPostStore(env.DB);
     const limit = parseMyLimit(url.searchParams.get("limit"));
+    const peek = url.searchParams.get("peek") === "1";
     const [page, total] = await Promise.all([
       store.page(user.id, cursor, limit),
       cursor ? Promise.resolve(null) : store.count(user.id)
     ]);
-    // Mo "Da viet" la da xem ket qua duyet; trang sau khong doi moc.
-    if (!cursor) await store.markSeen(user.id, now());
+    // Mo tab "Da viet" moi danh dau da xem; peek=1 chi warm cache.
+    if (!cursor && !peek) await store.markSeen(user.id, now());
 
     return interactionJson({
       success: true,

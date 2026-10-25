@@ -1,34 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    loadProfile,
-    saveProfile,
-    signOut,
-    submitAuth,
-    type AccountUser,
-    type TopicChoice
-  } from "./account-client";
+  import { submitAuth, type AccountUser } from "./account-client";
 
   type Mode = "login" | "register";
 
   let {
     open,
-    user,
     userKnown,
     onClose,
-    onSignedIn,
-    onSignedOut,
-    onOpenMine,
-    onProfileSaved
+    onSignedIn
   }: {
     open: boolean;
-    user: AccountUser | null;
     userKnown: boolean;
     onClose: () => void;
     onSignedIn: (user: AccountUser) => void;
-    onSignedOut: () => void;
-    onOpenMine: () => void;
-    onProfileSaved: (user: AccountUser, topicsChanged: boolean) => void;
   } = $props();
 
   const modes: Array<{ key: Mode; label: string }> = [
@@ -39,7 +24,6 @@
   const CLOSE_DISTANCE = 96;
   const uid = $props.id();
   const passwordId = `acc-password-${uid}`;
-  const topicsId = `acc-topics-${uid}`;
   const titleId = `acc-space-title-${uid}`;
 
   let mounted = $state(false);
@@ -82,18 +66,6 @@
     if (close) onClose();
   }
 
-  let editing = $state(false);
-  let editStatus = $state<"loading" | "ready" | "error">("loading");
-  let editName = $state("");
-  let topicChoices = $state<TopicChoice[]>([]);
-  let chosen = $state<string[]>([]);
-  let loadedChosen = "";
-  let saved = $state(false);
-
-  function topicKey(slugs: string[]): string {
-    return [...slugs].sort().join(".");
-  }
-
   let mode = $state<Mode>("login");
   let displayName = $state("");
   let email = $state("");
@@ -101,10 +73,6 @@
   let reveal = $state(false);
   let busy = $state(false);
   let error = $state("");
-
-  let initial = $derived(
-    (user?.displayName.trim().charAt(0) || "·").toLocaleUpperCase("vi")
-  );
 
   function chooseMode(key: Mode) {
     mode = key;
@@ -134,85 +102,7 @@
     password = "";
     reveal = false;
     onSignedIn(result.user);
-  }
-
-  async function startEdit() {
-    if (!user) return;
-
-    editing = true;
-    editStatus = "loading";
-    editName = user.displayName;
-    error = "";
-    saved = false;
-
-    const profile = await loadProfile();
-    if (!editing) return;
-
-    if (!profile) {
-      editStatus = "error";
-      return;
-    }
-
-    editName = profile.displayName;
-    topicChoices = profile.topics;
-    chosen = profile.topics
-      .filter((topic) => topic.chosen)
-      .map((topic) => topic.slug);
-    loadedChosen = topicKey(chosen);
-    editStatus = "ready";
-  }
-
-  function toggleTopic(slug: string) {
-    chosen = chosen.includes(slug)
-      ? chosen.filter((item) => item !== slug)
-      : [...chosen, slug];
-  }
-
-  async function saveEdit(event: SubmitEvent) {
-    event.preventDefault();
-    if (busy) return;
-
-    busy = true;
-    error = "";
-
-    const result = await saveProfile(editName, chosen);
-    busy = false;
-
-    if (!result.ok) {
-      error = result.message;
-      return;
-    }
-
-    editing = false;
-    saved = true;
-    onProfileSaved(result.user, topicKey(chosen) !== loadedChosen);
-  }
-
-  function cancelEdit() {
-    editing = false;
-    error = "";
-  }
-
-  // Dong ngan hoac doi nguoi dung thi bo phan dang sua.
-  $effect(() => {
-    if (!open || !user) editing = false;
-    if (!open) saved = false;
-  });
-
-  async function leave() {
-    if (busy) return;
-
-    busy = true;
-    const ok = await signOut();
-    busy = false;
-
-    if (ok) {
-      error = "";
-      mode = "login";
-      onSignedOut();
-    } else {
-      error = "Chưa đăng xuất được. Hãy thử lại.";
-    }
+    onClose();
   }
 </script>
 
@@ -249,7 +139,7 @@
     >
       <p class="acc-eyebrow">Không gian cá nhân</p>
       <div class="acc-head">
-        <h2 id={titleId} class="acc-title-hero">Tài khoản</h2>
+        <h2 id={titleId} class="acc-title-hero">Đăng nhập</h2>
         <button
           type="button"
           class="acc-close"
@@ -269,104 +159,8 @@
         <span></span>
         <span></span>
       </div>
-    {:else if user && editing}
-      <form class="acc-form acc-edit" onsubmit={saveEdit} novalidate>
-        <label class="acc-field">
-          <span>Tên hiển thị</span>
-          <input
-            type="text"
-            name="name"
-            autocomplete="nickname"
-            maxlength="60"
-            required
-            bind:value={editName}
-          />
-        </label>
-
-        <div class="acc-field">
-          <span id={topicsId}>Chủ đề bạn thích</span>
-          {#if editStatus === "loading"}
-            <div class="acc-chips" aria-hidden="true">
-              {#each [0, 1, 2, 3, 4] as index (index)}
-                <span class="acc-chip acc-chip-ghost"></span>
-              {/each}
-            </div>
-          {:else if editStatus === "error"}
-            <p class="acc-soft">
-              Chưa tải được danh sách chủ đề.
-              <button type="button" class="acc-inline" onclick={startEdit}>
-                Thử lại
-              </button>
-            </p>
-          {:else}
-            <div class="acc-chips" role="group" aria-labelledby={topicsId}>
-              {#each topicChoices as topic (topic.slug)}
-                <button
-                  type="button"
-                  class="acc-chip"
-                  class:on={chosen.includes(topic.slug)}
-                  aria-pressed={chosen.includes(topic.slug)}
-                  onclick={() => toggleTopic(topic.slug)}
-                >
-                  {topic.label}
-                </button>
-              {/each}
-            </div>
-            <p class="acc-soft">Chọn vài chủ đề để Bình Yên hiểu bạn hơn.</p>
-          {/if}
-        </div>
-
-        <p class="acc-error" aria-live="polite">{error}</p>
-
-        <button
-          type="submit"
-          class="acc-submit"
-          disabled={busy || editStatus !== "ready"}
-        >
-          {busy ? "Đang lưu…" : "Lưu thay đổi"}
-        </button>
-        <button type="button" class="acc-text" onclick={cancelEdit}>
-          Huỷ
-        </button>
-      </form>
-    {:else if user}
-      <div class="acc-profile">
-        <span class="acc-avatar" aria-hidden="true">{initial}</span>
-        <div class="acc-who">
-          <p class="acc-name">{user.displayName}</p>
-          <p class="acc-email">{user.email}</p>
-        </div>
-      </div>
-
-      <ul class="acc-links">
-        <li>
-          <button type="button" class="acc-link" onclick={onOpenMine}>
-            <span>Của tôi</span>
-            <span class="acc-hint">Đã thích, đã lưu, đã viết</span>
-          </button>
-        </li>
-        <li>
-          <button type="button" class="acc-link" onclick={startEdit}>
-            <span>Chỉnh sửa hồ sơ & chủ đề</span>
-            <span class="acc-hint" aria-live="polite">
-              {saved ? "Đã lưu" : "Tên, chủ đề"}
-            </span>
-          </button>
-        </li>
-      </ul>
-
-      <p class="acc-error" aria-live="polite">{error}</p>
-
-      <button
-        type="button"
-        class="acc-text"
-        disabled={busy}
-        onclick={leave}
-      >
-        {busy ? "Đang đăng xuất…" : "Đăng xuất"}
-      </button>
     {:else}
-      <div class="acc-modes" role="tablist" aria-label="Tài khoản">
+      <div class="acc-modes" role="tablist" aria-label="Đăng nhập">
         {#each modes as item (item.key)}
           <button
             type="button"
@@ -464,6 +258,8 @@
     z-index: 8;
     display: grid;
     place-items: stretch;
+    min-height: 0;
+    overflow: hidden;
     pointer-events: none;
     visibility: hidden;
     opacity: 0;
@@ -501,6 +297,8 @@
     width: 100%;
     height: 100%;
     max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
     margin: 0 auto;
     outline: none;
     transform: translateY(10px);
@@ -727,166 +525,6 @@
     font-size: 12px;
     line-height: 1.5;
     text-align: center;
-  }
-
-  .acc-profile {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-    margin: 4px 0 22px;
-  }
-
-  .acc-avatar {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 64px;
-    height: 64px;
-    border: 1px solid color-mix(in oklab, var(--color-text) 16%, transparent);
-    border-radius: 50%;
-    background: color-mix(in oklab, var(--color-surface) 48%, transparent);
-    color: var(--color-text);
-    font-family: var(--font-editorial);
-    font-size: 26px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
-
-  .acc-who {
-    min-width: 0;
-  }
-
-  .acc-who p {
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .acc-name {
-    color: var(--color-text);
-    font-family: var(--font-editorial);
-    font-size: 24px;
-    letter-spacing: -0.02em;
-  }
-
-  .acc-email {
-    margin-top: 2px;
-    color: var(--color-text-muted);
-    font-size: 13px;
-  }
-
-  .acc-links {
-    margin: 0 0 10px;
-    padding: 0;
-    list-style: none;
-  }
-
-  .acc-links li {
-    border-bottom: 1px solid
-      color-mix(in oklab, var(--color-text) 10%, transparent);
-  }
-
-  .acc-links li:first-child {
-    border-top: 1px solid
-      color-mix(in oklab, var(--color-text) 10%, transparent);
-  }
-
-  .acc-link {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    padding: 16px 0;
-    border: 0;
-    background: transparent;
-    color: var(--color-text);
-    font: inherit;
-    font-size: 15px;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .acc-link:disabled {
-    color: var(--color-text-muted);
-    cursor: default;
-  }
-
-  .acc-hint {
-    color: var(--color-text-muted);
-    font-size: 12px;
-  }
-
-  .acc-text {
-    display: block;
-    margin: 4px auto 0;
-    padding: 10px 14px;
-    border: 0;
-    background: transparent;
-    color: var(--color-text-secondary);
-    font: inherit;
-    font-size: 14px;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    cursor: pointer;
-  }
-
-  .acc-edit {
-    margin-top: 10px;
-  }
-
-  .acc-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 6px;
-  }
-
-  .acc-chip {
-    min-height: 34px;
-    padding: 6px 14px;
-    border: 1px solid color-mix(in oklab, var(--color-text) 14%, transparent);
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--color-surface) 24%, transparent);
-    color: var(--color-chip);
-    font: inherit;
-    font-size: 14px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    cursor: pointer;
-    transition:
-      background 160ms ease,
-      border-color 160ms ease,
-      color 160ms ease;
-  }
-
-  .acc-chip.on {
-    border-color: var(--color-chip-active-line);
-    background: var(--color-chip-active-bg);
-    color: var(--color-chip-active);
-  }
-
-  .acc-chip-ghost {
-    width: 84px;
-    border-color: transparent;
-    background: var(--color-surface-soft);
-  }
-
-  .acc-soft {
-    margin: 8px 0 0;
-    color: var(--color-text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-
-  .acc-inline {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--color-text-secondary);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
   }
 
   .acc-ghost {
