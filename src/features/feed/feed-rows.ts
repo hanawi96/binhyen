@@ -216,14 +216,22 @@ export function toContentItem(row: RankedContent): ContentItem {
 
 /**
  * Gan liked/saved cua ma dang xem vao tung the (mot truy van theo PRIMARY KEY).
- * Khong co actor thi giu liked/saved = false (khong gui xuong client).
+ * Khong co actor: van gan liked/saved = false de client khoi GET /reactions.
  */
 export async function attachViewerReactions(
   db: D1Database,
   items: ContentItem[],
   actorId: string | null
 ): Promise<ContentItem[]> {
-  if (!actorId || items.length === 0) return items;
+  if (items.length === 0) return items;
+
+  if (!actorId) {
+    return items.map((item) => ({
+      ...item,
+      liked: false,
+      saved: false
+    }));
+  }
 
   const slots = items.map((_, index) => `?${index + 2}`).join(", ");
   const { results } = await db

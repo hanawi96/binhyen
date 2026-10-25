@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
 
   import {
+    ensureAmbientReady,
     getAmbientSnapshot,
     hydrateAmbientPrefs,
     setAmbientEnabled,
@@ -30,6 +31,7 @@
 
   function togglePanel() {
     open = !open;
+    if (open) void ensureAmbientReady();
   }
 
   function closePanel() {
@@ -37,6 +39,7 @@
   }
 
   async function togglePower() {
+    await ensureAmbientReady();
     await setAmbientEnabled(!snap.enabled);
   }
 

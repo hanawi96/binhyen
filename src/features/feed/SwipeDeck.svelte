@@ -3,7 +3,6 @@
   import { onMount, tick, untrack } from "svelte";
   import ContentCard from "./ContentCard.svelte";
   import CollectionPager from "./CollectionPager.svelte";
-  import { demoContents } from "../content/demo-contents";
   import { type ContentItem } from "../content/content.types";
   import {
     atmosphereStyle,
@@ -830,7 +829,8 @@
 
   function warmMine() {
     ensureMe();
-    void prefetchMine("like");
+    // Khách chưa đăng nhập: bỏ prefetch /me/reactions lúc warm.
+    if (user) void prefetchMine("like");
     mineCode ??= import("../mine/MineSheet.svelte")
       .then((module) => {
         MineSheet = module.default;
@@ -860,13 +860,6 @@
       .catch(() => {
         writeCode = null;
       });
-  }
-
-  // Prefetch ba sheet luc ranh, khong canh tranh voi feed.
-  function warmAllSheets() {
-    warmMine();
-    warmAccount();
-    warmWrite();
   }
 
   // Moi ngan chiem mot muc lich su de nut Back dong ngan.
@@ -2597,34 +2590,9 @@
     );
     measureDeck();
 
-    // Prefetch sheet sau khi feed da on; timeout dam bao van chay neu khong idle.
-    let idleHandle: number | null = null;
-    let idleTimer = 0;
-    const scheduleIdle =
-      typeof window.requestIdleCallback === "function"
-        ? window.requestIdleCallback.bind(window)
-        : null;
-    const cancelIdle =
-      typeof window.cancelIdleCallback === "function"
-        ? window.cancelIdleCallback.bind(window)
-        : null;
-
-    if (scheduleIdle) {
-      idleHandle = scheduleIdle(
-        () => {
-          warmAllSheets();
-        },
-        { timeout: 2500 }
-      );
-    } else {
-      idleTimer = window.setTimeout(warmAllSheets, 1400);
-    }
-
     return () => {
       seenReporter.flushOnLeave();
       window.clearTimeout(meTimer);
-      if (idleHandle !== null && cancelIdle) cancelIdle(idleHandle);
-      window.clearTimeout(idleTimer);
       themeObserver.disconnect();
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("popstate", handlePopState);

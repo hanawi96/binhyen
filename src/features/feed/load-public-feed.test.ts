@@ -567,8 +567,9 @@ describe("loadPublicFeed trên SQL thật", () => {
     expect(item?.likeCount).toBe(12);
     expect(item?.saveCount).toBe(3);
     expect(item?.shareCount).toBe(7);
-    expect(item?.liked).toBeUndefined();
-    expect(item?.saved).toBeUndefined();
+    // Khách: false tường minh — client không GET /reactions.
+    expect(item?.liked).toBe(false);
+    expect(item?.saved).toBe(false);
   });
 
   it("feed gắn image / video / pollOptions từ bảng media và poll", async () => {

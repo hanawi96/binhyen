@@ -344,7 +344,22 @@ async function loadRemoteCatalog(): Promise<void> {
   await catalogPromise;
 }
 
-/** Doc preference; chi phat sau khi catalog remote san sang (tranh 404 fallback). */
+let deferredStart: number | null = null;
+let deferredIdle: number | null = null;
+
+async function startAmbientAfterIdle(): Promise<void> {
+  await loadRemoteCatalog();
+  notify();
+  if (prefs.enabled) {
+    await tryPlay();
+  }
+}
+
+/**
+ * Doc preference ngay (UI dung); catalog + audio doi idle/LCP
+ * de khong tranh bandwidth/CPU voi first paint. Mo panel van goi
+ * ensureAmbientReady() de catalog san sang som hon.
+ */
 export function hydrateAmbientPrefs(): void {
   if (hydrated) return;
   hydrated = true;
@@ -352,13 +367,40 @@ export function hydrateAmbientPrefs(): void {
   bindPageExit();
   notify();
 
-  void (async () => {
-    await loadRemoteCatalog();
-    notify();
-    if (prefs.enabled) {
-      await tryPlay();
+  const kick = () => {
+    deferredIdle = null;
+    deferredStart = null;
+    void startAmbientAfterIdle();
+  };
+
+  if (typeof window.requestIdleCallback === "function") {
+    deferredIdle = window.requestIdleCallback(kick, { timeout: 4000 });
+  } else {
+    deferredStart = window.setTimeout(kick, 2500);
+  }
+}
+
+/** Dam bao catalog da tai (mo panel / bat nhac truoc idle). */
+export async function ensureAmbientReady(): Promise<void> {
+  if (typeof window !== "undefined") {
+    if (deferredIdle !== null && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(deferredIdle);
+      deferredIdle = null;
     }
-  })();
+    if (deferredStart !== null) {
+      window.clearTimeout(deferredStart);
+      deferredStart = null;
+    }
+  }
+
+  if (!hydrated) {
+    hydrated = true;
+    prefs = readAmbientPrefs();
+    bindPageExit();
+  }
+
+  await loadRemoteCatalog();
+  notify();
 }
 
 export async function setAmbientEnabled(on: boolean): Promise<void> {
