@@ -316,7 +316,7 @@
           <span>Nội dung</span>
           <textarea
             class="write-prose"
-            rows="10"
+            rows="4"
             maxlength="8000"
             placeholder="Không bắt buộc. Viết dài hơn nếu bạn muốn — không gian này là của bạn."
             bind:value={body}
@@ -551,7 +551,7 @@
   }
 
   .write-field .write-prose {
-    min-height: 12em;
+    min-height: 5.5em;
     padding: 4px 0 12px;
     resize: vertical;
   }

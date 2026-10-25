@@ -110,8 +110,6 @@
   const PAGE_SIZE = 3;
   const PREFETCH_REMAINING = 1;
   const NEXT_PAGE_STATUS = "Đang chuẩn bị nội dung tiếp theo...";
-  const OTHER_ITEMS_NOTE =
-    "Chưa có nội dung cho lựa chọn này. Bạn đang xem những điều khác.";
   const ALL_SEEN_NOTE =
     "Bạn đã xem hết một vòng. Đang mở lại những bài cũ hơn.";
   const END_NOTE = "Bạn đã xem hết những điều đang có.";
@@ -1169,9 +1167,6 @@
       !hasMore &&
       !loading &&
       !loadError
-  );
-  let showingOtherItems = $derived(
-    filtered && !directMatch && contents.length > 0 && !loadError
   );
   let showingAllSeen = $derived(
     feedNotice === "all-seen" && contents.length > 0 && !loadError
@@ -3156,11 +3151,9 @@
   <p class="other-items-slot" aria-live="polite">
     {#if showingAllSeen}
       <span>{ALL_SEEN_NOTE}</span>
-    {:else if showingOtherItems}
-      <span>{OTHER_ITEMS_NOTE}</span>
     {/if}
     <span class="other-items-sizer" aria-hidden="true">
-      {OTHER_ITEMS_NOTE}
+      {ALL_SEEN_NOTE}
     </span>
   </p>
 
