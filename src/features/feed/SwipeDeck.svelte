@@ -2628,6 +2628,7 @@
   class="swipe-deck"
   class:is-reading={reading}
   class:is-reader-shown={readerShown}
+  class:is-glass-open={mineOpen || accountOpen || writeOpen}
 >
   <div
     class="atmosphere"
@@ -4069,6 +4070,37 @@
     transition:
       opacity 200ms ease,
       transform 200ms ease !important;
+  }
+
+  /* Không gian kính (Của tôi / Tài khoản): feed lùi sâu, vẫn thấy phía sau. */
+  .swipe-deck .atmosphere,
+  .swipe-deck .deck-viewport,
+  .swipe-deck .collection-pager-bar,
+  .swipe-deck .read-rail--card {
+    transition:
+      filter 380ms ease,
+      transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 320ms ease;
+  }
+
+  .swipe-deck.is-glass-open .atmosphere {
+    transform: scale(1.04);
+    filter: saturate(1.08);
+  }
+
+  .swipe-deck.is-glass-open .deck-viewport,
+  .swipe-deck.is-glass-open .collection-pager-bar,
+  .swipe-deck.is-glass-open .read-rail--card {
+    filter: blur(10px);
+    transform: scale(1.03);
+    opacity: 0.55;
+  }
+
+  .swipe-deck.is-glass-open .topbar,
+  .swipe-deck.is-glass-open .bottom {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 240ms ease;
   }
 
   /* Mở bài: chrome feed ẩn theo hướng “ra ngoài”; đóng thì ngược lại. */

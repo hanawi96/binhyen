@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
-  import Sheet from "../sheet/Sheet.svelte";
+  import { onMount, untrack } from "svelte";
   import {
     loadDraft,
     submitPost,
@@ -10,6 +9,7 @@
 
   const MAX_TOPICS = 3;
   const TITLE_MAX = 280;
+  const CLOSE_DISTANCE = 96;
 
   let {
     open,
@@ -37,6 +37,50 @@
   const uid = $props.id();
   const titleId = `write-title-${uid}`;
   const topicsId = `write-topics-${uid}`;
+  const spaceTitleId = `write-space-title-${uid}`;
+
+  let mounted = $state(false);
+  let panel = $state<HTMLElement | null>(null);
+  let dragY = $state(0);
+  let dragPointer = $state<number | null>(null);
+  let dragStart = 0;
+  let shown = $derived(open && mounted);
+
+  onMount(() => {
+    const timer = window.setTimeout(() => {
+      mounted = true;
+    }, 24);
+    return () => window.clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (shown) panel?.focus({ preventScroll: true });
+  });
+
+  function onGrabDown(event: PointerEvent) {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("button, textarea, input")
+    ) {
+      return;
+    }
+    dragPointer = event.pointerId;
+    dragStart = event.clientY;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function onGrabMove(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragY = Math.max(0, event.clientY - dragStart);
+  }
+
+  function onGrabEnd(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragPointer = null;
+    const close = dragY > CLOSE_DISTANCE;
+    dragY = 0;
+    if (close) onClose();
+  }
 
   let title = $state("");
   let body = $state("");
@@ -159,7 +203,57 @@
   }
 </script>
 
-<Sheet {open} tall title={edit ? "Sửa bài" : "Viết nội dung"} {onClose}>
+<div
+  class="write-space"
+  class:shown
+  class:dragging={dragPointer !== null}
+  style:--write-drag="{dragY}px"
+  aria-hidden={!open}
+>
+  <button
+    type="button"
+    class="write-veil"
+    tabindex="-1"
+    aria-label="Đóng không gian viết"
+    onclick={onClose}
+  ></button>
+
+  <section
+    class="write-panel"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={spaceTitleId}
+    tabindex="-1"
+    inert={!open}
+    bind:this={panel}
+  >
+    <div
+      class="write-top"
+      onpointerdown={onGrabDown}
+      onpointermove={onGrabMove}
+      onpointerup={onGrabEnd}
+      onpointercancel={onGrabEnd}
+    >
+      <p class="write-eyebrow">
+        {edit ? "Chỉnh sửa bản nháp" : "Một khoảng yên để viết"}
+      </p>
+      <div class="write-head">
+        <h2 id={spaceTitleId} class="write-title-hero">
+          {edit ? "Sửa bài" : "Viết bài"}
+        </h2>
+        <button
+          type="button"
+          class="write-close"
+          aria-label="Đóng"
+          onclick={onClose}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
   <div class="write-body">
     {#if !userKnown || (edit && editState === "loading")}
       <div class="write-ghost" aria-hidden="true">
@@ -203,12 +297,12 @@
       </div>
     {:else}
       <form class="write-form" onsubmit={submit} novalidate>
-        <div class="write-field">
+        <div class="write-field write-field-lead">
           <label for={titleId}>Câu chữ chính</label>
           <textarea
             id={titleId}
-            class="write-title"
-            rows="2"
+            class="write-lead"
+            rows="3"
             maxlength={TITLE_MAX}
             placeholder="Điều bạn muốn kể…"
             bind:value={title}
@@ -218,12 +312,13 @@
           {/if}
         </div>
 
-        <label class="write-field">
+        <label class="write-field write-field-body">
           <span>Nội dung</span>
           <textarea
-            rows="7"
+            class="write-prose"
+            rows="10"
             maxlength="8000"
-            placeholder="Không bắt buộc. Viết dài hơn nếu bạn muốn."
+            placeholder="Không bắt buộc. Viết dài hơn nếu bạn muốn — không gian này là của bạn."
             bind:value={body}
           ></textarea>
         </label>
@@ -264,67 +359,239 @@
       </form>
     {/if}
   </div>
-</Sheet>
+  </section>
+</div>
 
 <style>
+  .write-space {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: stretch;
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 360ms ease,
+      visibility 0s linear 360ms;
+  }
+
+  .write-space.shown {
+    pointer-events: auto;
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 360ms ease,
+      visibility 0s;
+  }
+
+  /* Veil sáng hơn Mine/Account — cảm giác “trang giấy mở” giữa không gian. */
+  .write-veil {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background:
+      radial-gradient(
+        ellipse 90% 70% at 50% 18%,
+        color-mix(in oklab, var(--color-surface) 55%, transparent),
+        transparent 70%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--color-surface) 34%, transparent),
+        color-mix(in oklab, var(--color-text) 14%, transparent) 48%,
+        color-mix(in oklab, var(--color-surface) 28%, transparent)
+      );
+    backdrop-filter: blur(22px) saturate(1.08);
+    -webkit-backdrop-filter: blur(22px) saturate(1.08);
+    cursor: pointer;
+  }
+
+  .write-panel {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: min(720px, 100%);
+    height: 100%;
+    max-height: 100dvh;
+    margin: 0 auto;
+    outline: none;
+    transform: translateY(22px) scale(0.988);
+    opacity: 0;
+    transition:
+      transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 300ms ease;
+  }
+
+  .write-space.shown .write-panel {
+    transform: translateY(var(--write-drag, 0px)) scale(1);
+    opacity: 1;
+  }
+
+  .write-space.dragging .write-panel {
+    transition: none;
+  }
+
+  .write-top {
+    flex: none;
+    padding:
+      max(20px, env(safe-area-inset-top))
+      28px
+      0;
+    touch-action: none;
+  }
+
+  .write-eyebrow {
+    margin: 0 0 8px;
+    color: color-mix(in oklab, var(--color-text) 52%, transparent);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .write-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .write-title-hero {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-editorial);
+    font-size: clamp(2.35rem, 9vw, 3.4rem);
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    line-height: 1.02;
+    text-shadow: 0 1px 28px
+      color-mix(in oklab, var(--color-surface) 48%, transparent);
+  }
+
+  .write-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 40px;
+    height: 40px;
+    margin-top: 6px;
+    padding: 0;
+    border: 1px solid color-mix(in oklab, var(--color-text) 18%, transparent);
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--color-surface) 48%, transparent);
+    color: var(--color-text);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+
+  .write-close svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
   .write-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 6px 22px max(22px, env(safe-area-inset-bottom));
+    padding: 12px 28px max(36px, env(safe-area-inset-bottom));
     overscroll-behavior: contain;
   }
 
   .write-form {
     display: grid;
-    gap: 16px;
-    padding-top: 8px;
+    gap: 28px;
+    padding-top: 12px;
   }
 
   .write-field {
     position: relative;
     display: grid;
-    gap: 4px;
+    gap: 8px;
   }
 
   .write-field > span:first-child,
   .write-field > label {
-    color: var(--color-eyebrow);
+    color: color-mix(in oklab, var(--color-text) 58%, transparent);
     font-size: 12px;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .write-field input,
   .write-field textarea {
     width: 100%;
-    padding: 8px 0;
+    padding: 10px 0;
     border: 0;
-    border-bottom: 1px solid var(--color-sheet-line);
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--color-text) 12%, transparent);
     border-radius: 0;
     background: transparent;
     color: var(--color-text);
     font: inherit;
-    font-size: 16px;
-    line-height: 1.55;
+    font-size: 17px;
+    line-height: 1.65;
     outline: none;
     resize: vertical;
   }
 
-  .write-field .write-title {
+  .write-field .write-lead {
+    min-height: 4.2em;
+    border-bottom-color: color-mix(
+      in oklab,
+      var(--color-text) 18%,
+      transparent
+    );
     font-family: var(--font-editorial);
-    font-size: 20px;
+    font-size: clamp(1.45rem, 4.5vw, 1.85rem);
     line-height: 1.35;
+    letter-spacing: -0.02em;
     resize: none;
+  }
+
+  .write-field .write-prose {
+    min-height: 12em;
+    padding: 18px 20px;
+    border: 1px solid color-mix(in oklab, var(--color-text) 10%, transparent);
+    border-radius: 22px;
+    background: color-mix(in oklab, var(--color-surface) 38%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    resize: vertical;
   }
 
   .write-field input:focus,
   .write-field textarea:focus {
-    border-bottom-color: var(--color-primary);
+    border-bottom-color: color-mix(
+      in oklab,
+      var(--color-primary) 65%,
+      transparent
+    );
+  }
+
+  .write-field .write-prose:focus {
+    border-color: color-mix(in oklab, var(--color-primary) 45%, transparent);
+    border-bottom-color: color-mix(
+      in oklab,
+      var(--color-primary) 45%,
+      transparent
+    );
   }
 
   .write-field input::placeholder,
   .write-field textarea::placeholder {
-    color: var(--color-text-muted);
+    color: color-mix(in oklab, var(--color-text) 38%, transparent);
   }
 
   .write-count {
@@ -338,18 +605,20 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 6px;
+    margin-top: 4px;
   }
 
   .write-chip {
-    min-height: 34px;
-    padding: 6px 14px;
-    border: 1px solid var(--color-sheet-line);
+    min-height: 36px;
+    padding: 6px 15px;
+    border: 1px solid color-mix(in oklab, var(--color-text) 14%, transparent);
     border-radius: 999px;
-    background: transparent;
+    background: color-mix(in oklab, var(--color-surface) 30%, transparent);
     color: var(--color-chip);
     font: inherit;
     font-size: 14px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     cursor: pointer;
     transition:
       background 160ms ease,
@@ -378,8 +647,12 @@
   }
 
   .write-submit {
+    display: block;
     width: 100%;
-    min-height: 46px;
+    max-width: 280px;
+    min-height: 48px;
+    margin-inline: auto;
+    justify-self: center;
     border: 0;
     border-radius: 999px;
     background: var(--color-primary);
@@ -415,10 +688,11 @@
   }
 
   .write-note {
-    padding: 40px 8px;
-    color: var(--color-sheet-body);
-    font-size: 15px;
-    line-height: 1.6;
+    padding: 56px 12px;
+    color: color-mix(in oklab, var(--color-text) 78%, transparent);
+    font-family: var(--font-editorial);
+    font-size: 17px;
+    line-height: 1.55;
     text-align: center;
   }
 
@@ -429,12 +703,13 @@
   .write-done {
     color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: 20px;
-    line-height: 1.4;
+    font-size: clamp(1.35rem, 4vw, 1.7rem);
+    line-height: 1.35;
   }
 
   .write-soft {
     color: var(--color-text-muted);
+    font-family: var(--font-body);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -444,7 +719,7 @@
   }
 
   .write-center {
-    margin: -4px 0 0;
+    margin: -8px 0 0;
     text-align: center;
   }
 
@@ -457,7 +732,7 @@
   .write-ghost span {
     height: 14px;
     border-radius: 7px;
-    background: var(--color-surface-soft);
+    background: color-mix(in oklab, var(--color-surface) 55%, transparent);
   }
 
   .write-ghost span + span {
@@ -465,8 +740,18 @@
   }
 
   @media (max-width: 640px) {
+    .write-top {
+      padding-left: 18px;
+      padding-right: 18px;
+    }
+
     .write-body {
-      padding: 6px 16px max(18px, env(safe-area-inset-bottom));
+      padding: 8px 18px max(28px, env(safe-area-inset-bottom));
+    }
+
+    .write-field .write-prose {
+      padding: 16px;
+      border-radius: 18px;
     }
   }
 </style>

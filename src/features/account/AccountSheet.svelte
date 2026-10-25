@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Sheet from "../sheet/Sheet.svelte";
+  import { onMount } from "svelte";
   import {
     loadProfile,
     saveProfile,
@@ -36,9 +36,51 @@
     { key: "register", label: "Tạo tài khoản" }
   ];
 
+  const CLOSE_DISTANCE = 96;
   const uid = $props.id();
   const passwordId = `acc-password-${uid}`;
   const topicsId = `acc-topics-${uid}`;
+  const titleId = `acc-space-title-${uid}`;
+
+  let mounted = $state(false);
+  let panel = $state<HTMLElement | null>(null);
+  let dragY = $state(0);
+  let dragPointer = $state<number | null>(null);
+  let dragStart = 0;
+  let shown = $derived(open && mounted);
+
+  onMount(() => {
+    const timer = window.setTimeout(() => {
+      mounted = true;
+    }, 24);
+    return () => window.clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (shown) panel?.focus({ preventScroll: true });
+  });
+
+  function onGrabDown(event: PointerEvent) {
+    if (event.target instanceof Element && event.target.closest("button")) {
+      return;
+    }
+    dragPointer = event.pointerId;
+    dragStart = event.clientY;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function onGrabMove(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragY = Math.max(0, event.clientY - dragStart);
+  }
+
+  function onGrabEnd(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragPointer = null;
+    const close = dragY > CLOSE_DISTANCE;
+    dragY = 0;
+    if (close) onClose();
+  }
 
   let editing = $state(false);
   let editStatus = $state<"loading" | "ready" | "error">("loading");
@@ -174,7 +216,53 @@
   }
 </script>
 
-<Sheet {open} title="Tài khoản" {onClose}>
+<div
+  class="acc-space"
+  class:shown
+  class:dragging={dragPointer !== null}
+  style:--acc-drag="{dragY}px"
+  aria-hidden={!open}
+>
+  <button
+    type="button"
+    class="acc-veil"
+    tabindex="-1"
+    aria-label="Đóng không gian tài khoản"
+    onclick={onClose}
+  ></button>
+
+  <section
+    class="acc-panel"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={titleId}
+    tabindex="-1"
+    inert={!open}
+    bind:this={panel}
+  >
+    <div
+      class="acc-top"
+      onpointerdown={onGrabDown}
+      onpointermove={onGrabMove}
+      onpointerup={onGrabEnd}
+      onpointercancel={onGrabEnd}
+    >
+      <p class="acc-eyebrow">Không gian cá nhân</p>
+      <div class="acc-head">
+        <h2 id={titleId} class="acc-title-hero">Tài khoản</h2>
+        <button
+          type="button"
+          class="acc-close"
+          aria-label="Đóng"
+          onclick={onClose}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
   <div class="acc-body">
     {#if !userKnown}
       <div class="acc-ghost" aria-hidden="true">
@@ -366,38 +454,186 @@
       </p>
     {/if}
   </div>
-</Sheet>
+  </section>
+</div>
 
 <style>
+  .acc-space {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: stretch;
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 320ms ease,
+      visibility 0s linear 320ms;
+  }
+
+  .acc-space.shown {
+    pointer-events: auto;
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 320ms ease,
+      visibility 0s;
+  }
+
+  .acc-veil {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background:
+      linear-gradient(
+        165deg,
+        color-mix(in oklab, var(--color-surface) 22%, transparent),
+        color-mix(in oklab, var(--color-text) 28%, transparent) 55%,
+        color-mix(in oklab, var(--color-surface) 18%, transparent)
+      );
+    backdrop-filter: blur(18px) saturate(1.15);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    cursor: pointer;
+  }
+
+  .acc-panel {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: min(560px, 100%);
+    height: 100%;
+    max-height: 100dvh;
+    margin: 0 auto;
+    outline: none;
+    transform: translateY(18px) scale(0.985);
+    opacity: 0;
+    transition:
+      transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 280ms ease;
+  }
+
+  .acc-space.shown .acc-panel {
+    transform: translateY(var(--acc-drag, 0px)) scale(1);
+    opacity: 1;
+  }
+
+  .acc-space.dragging .acc-panel {
+    transition: none;
+  }
+
+  .acc-top {
+    flex: none;
+    padding:
+      max(18px, env(safe-area-inset-top))
+      22px
+      0;
+    touch-action: none;
+  }
+
+  .acc-eyebrow {
+    margin: 0 0 6px;
+    color: color-mix(in oklab, var(--color-text) 55%, transparent);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .acc-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+
+  .acc-title-hero {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-editorial);
+    font-size: clamp(2.1rem, 8vw, 3rem);
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    text-shadow: 0 1px 24px
+      color-mix(in oklab, var(--color-surface) 40%, transparent);
+  }
+
+  .acc-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 40px;
+    height: 40px;
+    margin-top: 4px;
+    padding: 0;
+    border: 1px solid color-mix(in oklab, var(--color-text) 22%, transparent);
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--color-surface) 42%, transparent);
+    color: var(--color-text);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+
+  .acc-close svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
   .acc-body {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 6px 22px max(22px, env(safe-area-inset-bottom));
+    padding: 8px 22px max(28px, env(safe-area-inset-bottom));
     overscroll-behavior: contain;
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 12px,
+      #000 calc(100% - 28px),
+      transparent
+    );
   }
 
   .acc-modes {
     display: flex;
-    gap: 22px;
-    margin: 6px 0 18px;
-    border-bottom: 1px solid var(--color-sheet-line);
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 20px;
   }
 
   .acc-mode {
-    margin-bottom: -1px;
-    padding: 10px 0;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
-    color: var(--color-text-muted);
+    padding: 8px 14px;
+    border: 1px solid color-mix(in oklab, var(--color-text) 14%, transparent);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-surface) 28%, transparent);
+    color: color-mix(in oklab, var(--color-text) 72%, transparent);
     font: inherit;
-    font-size: 14px;
+    font-size: 13px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     cursor: pointer;
+    transition:
+      background 180ms ease,
+      border-color 180ms ease,
+      color 180ms ease;
   }
 
   .acc-mode.active {
-    border-bottom-color: var(--color-text);
+    border-color: color-mix(in oklab, var(--color-text) 28%, transparent);
+    background: color-mix(in oklab, var(--color-surface) 58%, transparent);
     color: var(--color-text);
-    font-weight: 600;
+    font-weight: 650;
   }
 
   .acc-form {
@@ -419,9 +655,10 @@
 
   .acc-field input {
     width: 100%;
-    padding: 8px 0;
+    padding: 10px 0;
     border: 0;
-    border-bottom: 1px solid var(--color-sheet-line);
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--color-text) 16%, transparent);
     border-radius: 0;
     background: transparent;
     color: var(--color-text);
@@ -431,7 +668,11 @@
   }
 
   .acc-field input:focus {
-    border-bottom-color: var(--color-primary);
+    border-bottom-color: color-mix(
+      in oklab,
+      var(--color-primary) 70%,
+      transparent
+    );
   }
 
   .acc-field input::placeholder {
@@ -502,22 +743,25 @@
 
   .acc-profile {
     display: flex;
-    gap: 14px;
+    gap: 16px;
     align-items: center;
-    margin: 10px 0 18px;
+    margin: 4px 0 22px;
   }
 
   .acc-avatar {
     display: grid;
     flex: none;
     place-items: center;
-    width: 52px;
-    height: 52px;
+    width: 64px;
+    height: 64px;
+    border: 1px solid color-mix(in oklab, var(--color-text) 16%, transparent);
     border-radius: 50%;
-    background: var(--color-surface-soft);
+    background: color-mix(in oklab, var(--color-surface) 48%, transparent);
     color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: 22px;
+    font-size: 26px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   .acc-who {
@@ -534,7 +778,8 @@
   .acc-name {
     color: var(--color-text);
     font-family: var(--font-editorial);
-    font-size: 20px;
+    font-size: 24px;
+    letter-spacing: -0.02em;
   }
 
   .acc-email {
@@ -544,14 +789,19 @@
   }
 
   .acc-links {
-    margin: 0 0 6px;
+    margin: 0 0 10px;
     padding: 0;
-    border-top: 1px solid var(--color-sheet-line);
     list-style: none;
   }
 
   .acc-links li {
-    border-bottom: 1px solid var(--color-sheet-line);
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--color-text) 10%, transparent);
+  }
+
+  .acc-links li:first-child {
+    border-top: 1px solid
+      color-mix(in oklab, var(--color-text) 10%, transparent);
   }
 
   .acc-link {
@@ -559,7 +809,7 @@
     justify-content: space-between;
     align-items: center;
     width: 100%;
-    padding: 14px 0;
+    padding: 16px 0;
     border: 0;
     background: transparent;
     color: var(--color-text);
@@ -607,12 +857,14 @@
   .acc-chip {
     min-height: 34px;
     padding: 6px 14px;
-    border: 1px solid var(--color-sheet-line);
+    border: 1px solid color-mix(in oklab, var(--color-text) 14%, transparent);
     border-radius: 999px;
-    background: transparent;
+    background: color-mix(in oklab, var(--color-surface) 24%, transparent);
     color: var(--color-chip);
     font: inherit;
     font-size: 14px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     cursor: pointer;
     transition:
       background 160ms ease,
@@ -666,8 +918,13 @@
   }
 
   @media (max-width: 640px) {
+    .acc-top {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
     .acc-body {
-      padding: 6px 16px max(18px, env(safe-area-inset-bottom));
+      padding: 8px 16px max(24px, env(safe-area-inset-bottom));
     }
   }
 </style>

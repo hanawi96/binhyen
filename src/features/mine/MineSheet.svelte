@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
-  import Sheet from "../sheet/Sheet.svelte";
+  import { onMount, untrack } from "svelte";
   import {
     loadMinePage,
     loadMinePosts,
@@ -69,8 +68,51 @@
     archived: "Không được duyệt"
   };
   const SWIPE_DISTANCE = 60;
+  const CLOSE_DISTANCE = 96;
 
   const relative = new Intl.RelativeTimeFormat("vi", { numeric: "auto" });
+  const uid = $props.id();
+  const titleId = `mine-space-title-${uid}`;
+
+  let mounted = $state(false);
+  let panel = $state<HTMLElement | null>(null);
+  let dragY = $state(0);
+  let dragPointer = $state<number | null>(null);
+  let dragStart = 0;
+  let shown = $derived(open && mounted);
+
+  onMount(() => {
+    const timer = window.setTimeout(() => {
+      mounted = true;
+    }, 24);
+    return () => window.clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (shown) panel?.focus({ preventScroll: true });
+  });
+
+  function onGrabDown(event: PointerEvent) {
+    if (event.target instanceof Element && event.target.closest("button")) {
+      return;
+    }
+    dragPointer = event.pointerId;
+    dragStart = event.clientY;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function onGrabMove(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragY = Math.max(0, event.clientY - dragStart);
+  }
+
+  function onGrabEnd(event: PointerEvent) {
+    if (event.pointerId !== dragPointer) return;
+    dragPointer = null;
+    const close = dragY > CLOSE_DISTANCE;
+    dragY = 0;
+    if (close) onClose();
+  }
 
   function freshList<T = MineItem>(): ListState<T> {
     return { items: [], next: null, status: "idle", more: false };
@@ -305,32 +347,79 @@
   }
 </script>
 
-<Sheet {open} behind={reading} tall title="Của tôi" {onClose}>
-  <div class="mine-tabs" role="tablist" aria-label="Nội dung của tôi">
-    {#each tabs as item (item.key)}
-      <button
-        type="button"
-        role="tab"
-        class="mine-tab"
-        class:active={item.key === tab}
-        aria-selected={item.key === tab}
-        onclick={() => chooseTab(item.key)}
-      >
-        {item.label}
-        {#if item.key === "like" && counts}
-          <span class="mine-count">{counts.liked}</span>
-        {:else if item.key === "save" && counts}
-          <span class="mine-count">{counts.saved}</span>
-        {:else if item.key === "post" && signedIn && postTotal !== null}
-          <span class="mine-count">{postTotal}</span>
-        {/if}
-        {#if item.key === "post" && postNews > 0}
-          <span class="mine-dot" aria-hidden="true"></span>
-          <span class="sr-only">, có kết quả duyệt mới</span>
-        {/if}
-      </button>
-    {/each}
-  </div>
+<div
+  class="mine-space"
+  class:shown
+  class:behind={reading}
+  class:dragging={dragPointer !== null}
+  style:--mine-drag="{dragY}px"
+  aria-hidden={!open || reading}
+>
+  <button
+    type="button"
+    class="mine-veil"
+    tabindex="-1"
+    aria-label="Đóng không gian của tôi"
+    onclick={onClose}
+  ></button>
+
+  <section
+    class="mine-panel"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={titleId}
+    tabindex="-1"
+    inert={!open || reading}
+    bind:this={panel}
+  >
+    <div
+      class="mine-top"
+      onpointerdown={onGrabDown}
+      onpointermove={onGrabMove}
+      onpointerup={onGrabEnd}
+      onpointercancel={onGrabEnd}
+    >
+      <p class="mine-eyebrow">Không gian riêng</p>
+      <div class="mine-head">
+        <h2 id={titleId} class="mine-title-hero">Của tôi</h2>
+        <button
+          type="button"
+          class="mine-close"
+          aria-label="Đóng"
+          onclick={onClose}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="mine-tabs" role="tablist" aria-label="Nội dung của tôi">
+        {#each tabs as item (item.key)}
+          <button
+            type="button"
+            role="tab"
+            class="mine-tab"
+            class:active={item.key === tab}
+            aria-selected={item.key === tab}
+            onclick={() => chooseTab(item.key)}
+          >
+            {item.label}
+            {#if item.key === "like" && counts}
+              <span class="mine-count">{counts.liked}</span>
+            {:else if item.key === "save" && counts}
+              <span class="mine-count">{counts.saved}</span>
+            {:else if item.key === "post" && signedIn && postTotal !== null}
+              <span class="mine-count">{postTotal}</span>
+            {/if}
+            {#if item.key === "post" && postNews > 0}
+              <span class="mine-dot" aria-hidden="true"></span>
+              <span class="sr-only">, có kết quả duyệt mới</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+    </div>
 
   <div
     class="mine-body"
@@ -540,9 +629,146 @@
     {/if}
     <div class="mine-sentinel" bind:this={sentinel} aria-hidden="true"></div>
   </div>
-</Sheet>
+  </section>
+</div>
 
 <style>
+  .mine-space {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: stretch;
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 320ms ease,
+      visibility 0s linear 320ms;
+  }
+
+  .mine-space.shown {
+    pointer-events: auto;
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 320ms ease,
+      visibility 0s;
+  }
+
+  .mine-space.behind {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .mine-veil {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background:
+      linear-gradient(
+        165deg,
+        color-mix(in oklab, var(--color-surface) 22%, transparent),
+        color-mix(in oklab, var(--color-text) 28%, transparent) 55%,
+        color-mix(in oklab, var(--color-surface) 18%, transparent)
+      );
+    backdrop-filter: blur(18px) saturate(1.15);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    cursor: pointer;
+  }
+
+  .mine-panel {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: min(560px, 100%);
+    height: 100%;
+    max-height: 100dvh;
+    margin: 0 auto;
+    outline: none;
+    transform: translateY(18px) scale(0.985);
+    opacity: 0;
+    transition:
+      transform 380ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 280ms ease;
+  }
+
+  .mine-space.shown .mine-panel {
+    transform: translateY(var(--mine-drag, 0px)) scale(1);
+    opacity: 1;
+  }
+
+  .mine-space.dragging .mine-panel {
+    transition: none;
+  }
+
+  .mine-top {
+    flex: none;
+    padding:
+      max(18px, env(safe-area-inset-top))
+      22px
+      0;
+    touch-action: none;
+  }
+
+  .mine-eyebrow {
+    margin: 0 0 6px;
+    color: color-mix(in oklab, var(--color-text) 55%, transparent);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .mine-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  .mine-title-hero {
+    margin: 0;
+    color: var(--color-text);
+    font-family: var(--font-editorial);
+    font-size: clamp(2.1rem, 8vw, 3rem);
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    text-shadow: 0 1px 24px color-mix(in oklab, var(--color-surface) 40%, transparent);
+  }
+
+  .mine-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 40px;
+    height: 40px;
+    margin-top: 4px;
+    padding: 0;
+    border: 1px solid color-mix(in oklab, var(--color-text) 22%, transparent);
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--color-surface) 42%, transparent);
+    color: var(--color-text);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+
+  .mine-close svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
   .mine-icon {
     display: grid;
     place-items: center;
@@ -573,27 +799,33 @@
   .mine-tabs {
     display: flex;
     flex: none;
-    gap: 4px;
-    padding: 6px 12px 0;
-    border-bottom: 1px solid var(--color-sheet-line);
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 0 14px;
   }
 
   .mine-tab {
-    padding: 10px 10px 12px;
-    border: 0;
-    background: transparent;
-    color: var(--color-quiet);
+    padding: 8px 14px;
+    border: 1px solid color-mix(in oklab, var(--color-text) 14%, transparent);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-surface) 28%, transparent);
+    color: color-mix(in oklab, var(--color-text) 72%, transparent);
     font: inherit;
     font-size: 13px;
-    text-decoration: underline 1px transparent;
-    text-underline-offset: 8px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     cursor: pointer;
+    transition:
+      background 180ms ease,
+      border-color 180ms ease,
+      color 180ms ease;
   }
 
   .mine-tab.active {
+    border-color: color-mix(in oklab, var(--color-text) 28%, transparent);
+    background: color-mix(in oklab, var(--color-surface) 58%, transparent);
     color: var(--color-text);
     font-weight: 650;
-    text-decoration-color: currentColor;
   }
 
   .mine-count {
@@ -609,8 +841,15 @@
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 0 22px max(18px, env(safe-area-inset-bottom));
+    padding: 4px 22px max(28px, env(safe-area-inset-bottom));
     touch-action: pan-y;
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 12px,
+      #000 calc(100% - 28px),
+      transparent
+    );
   }
 
   .mine-list {
@@ -623,8 +862,9 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    min-height: 72px;
-    border-bottom: 1px solid var(--color-sheet-line);
+    min-height: 76px;
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--color-text) 10%, transparent);
     transition: opacity 200ms ease;
   }
 
@@ -801,10 +1041,11 @@
   }
 
   .mine-note {
-    padding: 48px 8px;
-    color: var(--color-sheet-body);
-    font-size: 15px;
-    line-height: 1.6;
+    padding: 56px 12px;
+    color: color-mix(in oklab, var(--color-text) 78%, transparent);
+    font-family: var(--font-editorial);
+    font-size: 17px;
+    line-height: 1.55;
     text-align: center;
   }
 
@@ -828,8 +1069,13 @@
   }
 
   @media (max-width: 640px) {
+    .mine-top {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
     .mine-body {
-      padding: 0 16px max(14px, env(safe-area-inset-bottom));
+      padding: 4px 16px max(24px, env(safe-area-inset-bottom));
     }
   }
 </style>
