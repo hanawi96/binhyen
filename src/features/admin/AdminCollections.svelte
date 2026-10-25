@@ -84,6 +84,8 @@
     if (format === "image") return "Ảnh";
     if (format === "video") return "Video";
     if (format === "poll") return "Khảo sát";
+    if (format === "prompt") return "Câu hỏi";
+    if (format === "quote") return "Câu nói";
     return "Chữ";
   }
 

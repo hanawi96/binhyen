@@ -8,6 +8,7 @@ import {
 } from "../../../../features/admin/admin-http";
 import { parseContentDraft } from "../../../../features/admin/content-draft";
 import {
+  deleteAdminContent,
   getAdminContent,
   respondAdminError,
   updateAdminContent
@@ -91,6 +92,33 @@ export const PATCH: APIRoute = async ({ request, params }) => {
     await gcContentMediaChange(env.MEDIA, mediaBefore, mediaAfter);
 
     return adminJson({ success: true, content }, 200);
+  } catch (error) {
+    return respondAdminError(error);
+  }
+};
+
+/** DELETE /api/admin/contents/:id — xoa vinh vien khoi DB (+ media R2 local). */
+export const DELETE: APIRoute = async ({ request, params }) => {
+  const denied = requireAdmin(request);
+  if (denied) return denied;
+
+  const id = contentId(params.id);
+  if (id instanceof Response) return id;
+
+  try {
+    const mediaBefore = await listContentMediaRefs(env.DB, id);
+    const removed = await deleteAdminContent(env.DB, id);
+
+    if (!removed) {
+      return adminJson(
+        { success: false, error: "Không tìm thấy bài." },
+        404
+      );
+    }
+
+    await gcContentMediaChange(env.MEDIA, mediaBefore, []);
+
+    return adminJson({ success: true, id }, 200);
   } catch (error) {
     return respondAdminError(error);
   }

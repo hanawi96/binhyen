@@ -14,6 +14,8 @@ function baseRow(overrides: Partial<ContentRow> = {}): ContentRow {
     description: "",
     tag: "",
     theme: "peace",
+    source_label: null,
+    source_url: null,
     published_at: 100,
     rank_key: 1,
     seq: 1,
@@ -125,6 +127,22 @@ describe("mapRow media + poll", () => {
       { id: "o3", label: "C" }
     ]);
     expect(toContentItem(row).pollOptions?.length).toBe(3);
+  });
+
+  it("gắn source khi có source_label (câu nói)", () => {
+    const row = mapRow(
+      baseRow({
+        format: "quote",
+        source_label: " Nguyễn Du ",
+        source_url: "https://example.com/nguyen-du"
+      })
+    );
+
+    expect(row.source).toEqual({
+      label: "Nguyễn Du",
+      url: "https://example.com/nguyen-du"
+    });
+    expect(toContentItem(row).source?.label).toBe("Nguyễn Du");
   });
 
   it("không gắn media khi format text dù có media_json", () => {

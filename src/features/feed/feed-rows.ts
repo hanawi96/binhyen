@@ -22,6 +22,8 @@ export const CARD_COLUMNS = `
   c.description,
   c.tag,
   c.theme,
+  c.source_label,
+  c.source_url,
   c.published_at,
   c.rank_key,
   c.seq,
@@ -93,6 +95,8 @@ export interface ContentRow {
   description: string;
   tag: string;
   theme: string;
+  source_label: string | null;
+  source_url: string | null;
   published_at: number;
   rank_key: number;
   seq: number;
@@ -162,6 +166,11 @@ export function mapRow(row: ContentRow): RankedContent {
   const pollOptions =
     format === "poll" ? readPollOptions(row.poll_options_json) : undefined;
 
+  const sourceLabel =
+    typeof row.source_label === "string" ? row.source_label.trim() : "";
+  const sourceUrl =
+    typeof row.source_url === "string" ? row.source_url.trim() : "";
+
   return {
     id: row.id,
     slug: row.slug,
@@ -179,6 +188,9 @@ export function mapRow(row: ContentRow): RankedContent {
     likeCount: asCount(row.like_count),
     saveCount: asCount(row.save_count),
     shareCount: asCount(row.share_count),
+    ...(sourceLabel
+      ? { source: { label: sourceLabel, url: sourceUrl } }
+      : {}),
     ...(image ? { image } : {}),
     ...(video ? { video } : {}),
     ...(pollOptions ? { pollOptions } : {}),
@@ -208,6 +220,7 @@ export function toContentItem(row: RankedContent): ContentItem {
     shareCount: row.shareCount ?? 0,
     ...(typeof row.liked === "boolean" ? { liked: row.liked } : {}),
     ...(typeof row.saved === "boolean" ? { saved: row.saved } : {}),
+    ...(row.source ? { source: row.source } : {}),
     ...(row.image ? { image: row.image } : {}),
     ...(row.video ? { video: row.video } : {}),
     ...(row.pollOptions ? { pollOptions: row.pollOptions } : {})

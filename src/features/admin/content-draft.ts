@@ -144,8 +144,9 @@ function parseMediaSizeFields(
 }
 
 /**
- * Form biên tập: bài viết (chữ ± ảnh) | video | poll.
+ * Form biên tập: bài viết (chữ ± ảnh) | video | poll | prompt | quote.
  * Có URL ảnh → format image; không → text. Theme DB cố định (atmosphere lo nền).
+ * Quote: sourceLabel = tên tác giả / nguồn dân gian (bắt buộc).
  */
 export function parseContentDraft(
   input: unknown
@@ -164,9 +165,11 @@ export function parseContentDraft(
   const topics = slugList(source.topics, MAX_DRAFT_TOPICS);
   const moods = slugList(source.moods, MAX_DRAFT_MOODS);
 
-  let kind: "story" | "video" | "poll" = "story";
+  let kind: "story" | "video" | "poll" | "prompt" | "quote" = "story";
   if (source.format === "poll") kind = "poll";
   else if (source.format === "video") kind = "video";
+  else if (source.format === "prompt") kind = "prompt";
+  else if (source.format === "quote") kind = "quote";
   else if (
     source.format !== undefined &&
     source.format !== "text" &&
@@ -179,11 +182,13 @@ export function parseContentDraft(
     return {
       ok: false,
       error:
-        kind === "poll"
+        kind === "poll" || kind === "prompt"
           ? "Hãy nhập câu hỏi."
-          : kind === "video"
-            ? "Hãy nhập chú thích video."
-            : "Hãy nhập câu chữ chính."
+          : kind === "quote"
+            ? "Hãy nhập câu nói."
+            : kind === "video"
+              ? "Hãy nhập chú thích video."
+              : "Hãy nhập câu chữ chính."
     };
   }
 
@@ -193,6 +198,13 @@ export function parseContentDraft(
 
   if (sourceLabel === null || body === null || !moods) {
     return { ok: false, error: "Một vài mục chưa hợp lệ." };
+  }
+
+  if (kind === "quote" && !sourceLabel) {
+    return {
+      ok: false,
+      error: "Hãy nhập tên tác giả hoặc nguồn dân gian."
+    };
   }
 
   if (sourceUrl === null || !httpUrl(sourceUrl)) {
@@ -259,6 +271,10 @@ export function parseContentDraft(
       };
     }
     pollOptions = options;
+  } else if (kind === "prompt") {
+    format = "prompt";
+  } else if (kind === "quote") {
+    format = "quote";
   } else {
     // Bài viết: ảnh tùy chọn → image; không ảnh → text.
     const rawUrl =
@@ -297,12 +313,12 @@ export function parseContentDraft(
       description: "",
       tag: "",
       format,
-      kind: "story",
+      kind: format === "quote" ? "quote" : "story",
       topics,
       moods,
       sourceLabel,
       sourceUrl,
-      body: format === "poll" ? "" : body,
+      body: format === "poll" || format === "quote" ? "" : body,
       imageUrl,
       imageAlt,
       imageWidth,

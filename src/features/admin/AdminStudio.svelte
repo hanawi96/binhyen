@@ -14,8 +14,7 @@
     contentKinds,
     isContentKind,
     isContentTheme,
-    isContentTopic,
-    type ContentItem,
+    type ContentFormat,
     type ContentKind,
     type ContentStatus
   } from "../content/content.types";
@@ -27,13 +26,7 @@
     readUrlMediaSize,
     type MediaSize
   } from "../media/media-dimensions";
-  import {
-    categoryForTopicSlug,
-    DEFAULT_CONTENT_THEME,
-    topicLabels
-  } from "../content/topic-look";
   import { isCatalogSlug } from "./catalog";
-  import ContentCard from "../feed/ContentCard.svelte";
 
   const PAGE_SIZE = 12;
 
@@ -47,14 +40,19 @@
     tip: "Mẹo hữu ích"
   };
 
+  const formatLabels: Record<ContentFormat, string> = {
+    text: "Bài viết",
+    image: "Ảnh",
+    video: "Video",
+    poll: "Khảo sát",
+    prompt: "Câu hỏi",
+    quote: "Câu nói"
+  };
+
   const statusLabels: Record<ContentStatus, string> = {
     draft: "Bản nháp",
     published: "Đã xuất bản",
     archived: "Lưu trữ"
-  };
-
-  const reasonLabels: Record<ReviewReason, string> = {
-    topic: "Thiếu chủ đề"
   };
 
   const tabs: Array<{ id: "all" | ContentStatus; label: string }> = [
@@ -72,7 +70,7 @@
 
   interface DraftForm {
     title: string;
-    format: "text" | "image" | "video" | "poll";
+    format: "text" | "image" | "video" | "poll" | "prompt" | "quote";
     topics: string[];
     moods: string[];
     sourceLabel: string;
@@ -156,6 +154,10 @@
   let mediaUploading = $state(false);
   let mediaMeasuring = $state(false);
   let confirmArchive = $state(false);
+  let deleteTarget = $state<AdminListItem | null>(null);
+  let deleteDialog = $state<HTMLDialogElement | null>(null);
+  let deleting = $state(false);
+  let deleteError = $state("");
   let sizeProbeTicket = 0;
   let sizeProbeTimer: ReturnType<typeof setTimeout> | undefined;
   let content = $state<AdminContent | null>(null);
@@ -165,7 +167,6 @@
     null
   );
   let editor = $state<HTMLDialogElement | null>(null);
-  let editorPane = $state<"compose" | "preview">("compose");
   let storyImageInput = $state<HTMLInputElement | null>(null);
   let storyUrlOpen = $state(false);
 
@@ -175,79 +176,6 @@
 
   let topicChoices = $derived(topics);
   let moodChoices = $derived(moods);
-  /** Thẻ giống trang chủ — chỉ nội dung chính (ContentCard). */
-  let previewContent = $derived.by((): ContentItem => {
-    const topic = form.topics[0];
-    const resolvedFormat =
-      form.format === "video" || form.format === "poll"
-        ? form.format
-        : form.imageUrl.trim()
-          ? "image"
-          : "text";
-    const title =
-      form.title.trim() ||
-      (resolvedFormat === "video"
-        ? "Chú thích video"
-        : resolvedFormat === "poll"
-          ? "Câu hỏi khảo sát"
-          : "Câu chữ chính");
-    const width = Number(form.imageWidth);
-    const height = Number(form.imageHeight);
-    const mediaW =
-      Number.isFinite(width) && width > 0 ? Math.round(width) : null;
-    const mediaH =
-      Number.isFinite(height) && height > 0 ? Math.round(height) : null;
-    const url = form.imageUrl.trim();
-
-    const item: ContentItem = {
-      id: "preview",
-      slug: "preview",
-      format: resolvedFormat,
-      kind: "story",
-      status: "draft",
-      category: topic ? categoryForTopicSlug(topic) : "",
-      title,
-      description: "",
-      tag: "",
-      theme: DEFAULT_CONTENT_THEME,
-      topics: form.topics,
-      suitableMoods: form.moods,
-      topicLabel: topic
-        ? (isContentTopic(topic) ? topicLabels[topic] : null) ??
-          topics.find((item) => item.slug === topic)?.label ??
-          topic
-        : "",
-      hasArticle:
-        resolvedFormat !== "poll" && form.body.trim().length > 0
-    };
-
-    if (resolvedFormat === "image" && url) {
-      item.image = {
-        url,
-        alt: form.imageAlt.trim(),
-        width: mediaW,
-        height: mediaH
-      };
-    } else if (resolvedFormat === "video" && url) {
-      item.video = {
-        url,
-        alt: form.imageAlt.trim(),
-        poster: form.posterUrl.trim() || null,
-        width: mediaW,
-        height: mediaH
-      };
-    } else if (resolvedFormat === "poll") {
-      const options = form.pollOptions
-        .map((label, index) => ({
-          id: `preview-${index}`,
-          label: label.trim()
-        }))
-        .filter((option) => option.label);
-      if (options.length >= 2) item.pollOptions = options;
-    }
-
-    return item;
-  });
   let archived = $derived(content?.status === "archived");
   let dirty = $derived(formSnapshot(form) !== savedForm);
   let safeUrl = $derived.by(() => {
@@ -328,6 +256,7 @@
       title,
       description,
       category,
+      format: readContentFormat(row.format),
       kind,
       theme,
       status,
@@ -715,7 +644,9 @@
     const format =
       next.format === "poll" ||
       next.format === "image" ||
-      next.format === "video"
+      next.format === "video" ||
+      next.format === "prompt" ||
+      next.format === "quote"
         ? next.format
         : "text";
 
@@ -740,7 +671,6 @@
   }
 
   function showEditor() {
-    editorPane = "compose";
     queueMicrotask(() => {
       if (editor && !editor.open) editor.showModal();
     });
@@ -937,21 +867,29 @@
     if (saving || detailLoading || archived) return;
 
     if (!form.title.trim() || form.topics.length === 0) {
-      editorPane = "compose";
       notice = {
         tone: "error",
         text:
-          form.format === "poll"
+          form.format === "poll" || form.format === "prompt"
             ? "Hãy nhập câu hỏi và chọn ít nhất một chủ đề."
-            : form.format === "video"
-              ? "Hãy nhập chú thích video và chọn ít nhất một chủ đề."
-              : "Hãy nhập câu chữ chính và chọn ít nhất một chủ đề."
+            : form.format === "quote"
+              ? "Hãy nhập câu nói và chọn ít nhất một chủ đề."
+              : form.format === "video"
+                ? "Hãy nhập chú thích video và chọn ít nhất một chủ đề."
+                : "Hãy nhập câu chữ chính và chọn ít nhất một chủ đề."
+      };
+      return;
+    }
+
+    if (form.format === "quote" && !form.sourceLabel.trim()) {
+      notice = {
+        tone: "error",
+        text: "Hãy nhập tên tác giả hoặc nguồn dân gian."
       };
       return;
     }
 
     if (form.format === "video" && !form.imageUrl.trim()) {
-      editorPane = "compose";
       notice = {
         tone: "error",
         text: "Hãy dán URL video hoặc tải tệp lên."
@@ -965,7 +903,6 @@
         .filter(Boolean);
 
       if (filled.length < 2 || filled.length > 4) {
-        editorPane = "compose";
         notice = {
           tone: "error",
           text: "Khảo sát cần 2 đến 4 đáp án."
@@ -975,7 +912,6 @@
     }
 
     if (form.sourceUrl.trim() && !safeUrl) {
-      editorPane = "compose";
       notice = {
         tone: "error",
         text: "Liên kết nguồn không hợp lệ."
@@ -998,7 +934,10 @@
           body: JSON.stringify({
             ...form,
             format:
-              form.format === "video" || form.format === "poll"
+              form.format === "video" ||
+              form.format === "poll" ||
+              form.format === "prompt" ||
+              form.format === "quote"
                 ? form.format
                 : form.imageUrl.trim()
                   ? "image"
@@ -1091,6 +1030,80 @@
     await loadList();
   }
 
+  function askDelete(item: AdminListItem, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteError = "";
+    deleteTarget = item;
+    deleteDialog?.showModal();
+  }
+
+  function cancelDelete() {
+    if (deleting) return;
+    deleteDialog?.close();
+    deleteTarget = null;
+    deleteError = "";
+  }
+
+  async function confirmDelete() {
+    const target = deleteTarget;
+    if (!target || deleting) return;
+
+    deleting = true;
+    deleteError = "";
+
+    try {
+      const { response, body } = await requestJson(
+        `/api/admin/contents/${target.id}`,
+        { method: "DELETE" }
+      );
+
+      if (response.status === 401) {
+        loseAccess();
+        return;
+      }
+
+      if (!response.ok) {
+        deleteError = errorText(body, "Không xóa được bài.");
+        return;
+      }
+
+      items = items.filter((item) => item.id !== target.id);
+      total = Math.max(0, total - 1);
+      stats = {
+        ...stats,
+        total: Math.max(0, stats.total - 1),
+        published:
+          target.status === "published"
+            ? Math.max(0, stats.published - 1)
+            : stats.published,
+        drafts:
+          target.status === "draft"
+            ? Math.max(0, stats.drafts - 1)
+            : stats.drafts,
+        review:
+          target.reviewReasons.length > 0
+            ? Math.max(0, stats.review - 1)
+            : stats.review
+      };
+
+      if (content?.id === target.id) {
+        confirmArchive = false;
+        content = null;
+        form = emptyForm();
+        remember();
+        editor?.close();
+      }
+
+      deleteDialog?.close();
+      deleteTarget = null;
+    } catch {
+      deleteError = "Không có kết nối.";
+    } finally {
+      deleting = false;
+    }
+  }
+
   async function archive() {
     if (!content || saving || detailLoading || archived) return;
 
@@ -1167,9 +1180,13 @@
     void uploadMediaFile(file, "image", "main");
   }
 
-  function setFormat(next: "text" | "video" | "poll") {
+  function setFormat(next: "text" | "video" | "poll" | "prompt" | "quote") {
     if (next === "text") {
-      if (form.format === "video") {
+      if (
+        form.format === "video" ||
+        form.format === "prompt" ||
+        form.format === "quote"
+      ) {
         form.imageUrl = "";
         form.imageAlt = "";
         form.posterUrl = "";
@@ -1187,6 +1204,15 @@
         clearMeasuredSize();
       }
       form.format = "video";
+      return;
+    }
+
+    if (next === "prompt" || next === "quote") {
+      form.imageUrl = "";
+      form.imageAlt = "";
+      form.posterUrl = "";
+      clearMeasuredSize();
+      form.format = next;
       return;
     }
 
@@ -1372,19 +1398,82 @@
             {#each items as item (item.id)}
               <li>
                 <div class="content-top">
-                  <span class="kind">{kindLabels[item.kind]}</span>
+                  <span class="kind">{formatLabels[item.format]}</span>
                   <div class="content-tools">
                     <span class="status status-{item.status}">
                       {statusLabels[item.status]}
                     </span>
+                    {#if item.status === "published"}
+                      <a
+                        class="view-card"
+                        href={`/?v=${encodeURIComponent(item.id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Xem ${item.title} trên trang chủ`}
+                        title="Xem trên trang chủ"
+                        onclick={(event) => event.stopPropagation()}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke-width="1.5"
+                          stroke="currentColor"
+                          aria-hidden="true"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
+                          />
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                          />
+                        </svg>
+                      </a>
+                    {/if}
+                    <button
+                      type="button"
+                      class="delete-card"
+                      aria-label={`Xóa ${item.title}`}
+                      onclick={(event) => askDelete(item, event)}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                        />
+                      </svg>
+                    </button>
                     <button
                       type="button"
                       class="open-card"
                       aria-label={`Chỉnh sửa ${item.title}`}
                       onclick={() => openItem(item)}
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M7 16.5 16.5 7M10.5 7H17v6.5" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                        />
                       </svg>
                     </button>
                   </div>
@@ -1393,15 +1482,8 @@
                 {#if item.description}
                   <p class="excerpt">{item.description}</p>
                 {/if}
-                {#if item.reviewReasons.length > 0}
-                  <p class="review-note">
-                    {item.reviewReasons
-                      .map((reason) => reasonLabels[reason])
-                      .join(", ")}
-                  </p>
-                {/if}
                 <div class="content-meta">
-                  <span>
+                  <span class:topic-missing={item.topics.length === 0}>
                     {item.topics.length
                       ? item.topics.map(topicLabel).join(" · ")
                       : "Chưa có chủ đề"}
@@ -1486,49 +1568,11 @@
           </p>
         {/if}
 
-        <div
-          class="editor-tabs"
-          role="tablist"
-          aria-label="Chế độ biên tập"
-        >
-          <button
-            type="button"
-            class="editor-tab"
-            role="tab"
-            id="editor-tab-compose"
-            aria-controls="editor-compose"
-            aria-selected={editorPane === "compose"}
-            tabindex={editorPane === "compose" ? 0 : -1}
-            onclick={() => (editorPane = "compose")}
-          >
-            Soạn
-          </button>
-          <button
-            type="button"
-            class="editor-tab"
-            role="tab"
-            id="editor-tab-preview"
-            aria-controls="editor-preview"
-            aria-selected={editorPane === "preview"}
-            tabindex={editorPane === "preview" ? 0 : -1}
-            onclick={() => (editorPane = "preview")}
-          >
-            Xem trước
-          </button>
-        </div>
-
         <div class="editor-body">
-        <div class="editor-grid" data-pane={editorPane}>
           <fieldset
             class="compose-pane"
-            id="editor-compose"
-            role="tabpanel"
-            aria-labelledby="editor-tab-compose"
             disabled={detailLoading || archived || saving}
           >
-            {#if detailLoading}
-              <p>Đang mở bài…</p>
-            {/if}
             <p class="field-label" id="format-label">Định dạng</p>
             <div class="chips" role="group" aria-labelledby="format-label">
               <button
@@ -1538,6 +1582,14 @@
                 onclick={() => setFormat("text")}
               >
                 Bài viết
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "quote"}
+                onclick={() => setFormat("quote")}
+              >
+                Câu nói
               </button>
               <button
                 type="button"
@@ -1555,13 +1607,23 @@
               >
                 Khảo sát
               </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={form.format === "prompt"}
+                onclick={() => setFormat("prompt")}
+              >
+                Câu hỏi
+              </button>
             </div>
             <label>
-              {form.format === "poll"
+              {form.format === "poll" || form.format === "prompt"
                 ? "Câu hỏi"
-                : form.format === "video"
-                  ? "Chú thích video"
-                  : "Câu chữ chính"}
+                : form.format === "quote"
+                  ? "Câu nói"
+                  : form.format === "video"
+                    ? "Chú thích video"
+                    : "Câu chữ chính"}
               <textarea
                 rows="3"
                 maxlength="280"
@@ -1569,6 +1631,25 @@
                 required
               ></textarea>
             </label>
+            {#if form.format === "quote"}
+              <label>
+                Tác giả / nguồn dân gian
+                <input
+                  maxlength="80"
+                  placeholder="Ví dụ: Nguyễn Du, tục ngữ Việt Nam…"
+                  bind:value={form.sourceLabel}
+                  required
+                />
+              </label>
+              <p class="hint">
+                Ghi tên người nổi tiếng, hoặc nguồn dân gian nếu là tục ngữ / ca dao.
+              </p>
+            {/if}
+            {#if form.format === "prompt"}
+              <p class="hint">
+                Người đọc chỉ nghĩ riêng — không chọn đáp án, không hiện phần trăm.
+              </p>
+            {/if}
             {#if isStory}
               <div class="media-pane">
                 <p class="field-label">Ảnh minh họa</p>
@@ -1829,24 +1910,40 @@
               </div>
               <p class="hint">Có thể gắn một bài vào nhiều bộ.</p>
             {/if}
-            {#if isStory || form.format === "video"}
+            {#if isStory || form.format === "video" || form.format === "prompt"}
               <label>
-                Nội dung bài viết (Markdown, tùy chọn)
+                {form.format === "prompt"
+                  ? "Gợi ý thêm (Markdown, tùy chọn)"
+                  : "Nội dung bài viết (Markdown, tùy chọn)"}
                 <textarea
                   rows="6"
                   maxlength="8000"
-                  placeholder="Viết thêm để hiện nút Đọc thêm trên thẻ…"
+                  placeholder={form.format === "prompt"
+                    ? "Vài dòng để người đọc nghĩ sâu hơn…"
+                    : "Viết thêm để hiện nút Đọc thêm trên thẻ…"}
                   bind:value={form.body}
                 ></textarea>
               </label>
             {/if}
-            <div class="split">
+            {#if form.format !== "quote"}
+              <div class="split">
+                <label>
+                  Nguồn
+                  <input maxlength="80" bind:value={form.sourceLabel} />
+                </label>
+                <label>
+                  URL nguồn
+                  <input
+                    type="url"
+                    maxlength="300"
+                    placeholder="https://"
+                    bind:value={form.sourceUrl}
+                  />
+                </label>
+              </div>
+            {:else}
               <label>
-                Nguồn
-                <input maxlength="80" bind:value={form.sourceLabel} />
-              </label>
-              <label>
-                URL nguồn
+                URL nguồn (tùy chọn)
                 <input
                   type="url"
                   maxlength="300"
@@ -1854,7 +1951,7 @@
                   bind:value={form.sourceUrl}
                 />
               </label>
-            </div>
+            {/if}
             {#if form.topics.length === 0}
               <p class="hint">
                 Bài thiếu chủ đề sẽ nằm trong mục cần rà soát.
@@ -1862,24 +1959,6 @@
               </p>
             {/if}
           </fieldset>
-
-          <aside
-            class="preview"
-            id="editor-preview"
-            role="tabpanel"
-            aria-labelledby="editor-tab-preview"
-            aria-label="Xem trước thẻ"
-          >
-            <p class="field-label preview-caption">
-              Xem trước · màn điện thoại
-            </p>
-            <div class="preview-phone">
-              <div class="preview-stage">
-                <ContentCard content={previewContent} active={false} />
-              </div>
-            </div>
-          </aside>
-        </div>
         </div>
 
         <footer class="editor-actions">
@@ -1928,6 +2007,54 @@
       </form>
     </dialog>
 
+    <dialog
+      class="delete-confirm"
+      bind:this={deleteDialog}
+      aria-labelledby="delete-title"
+      oncancel={(event) => {
+        if (deleting) {
+          event.preventDefault();
+          return;
+        }
+        deleteTarget = null;
+        deleteError = "";
+      }}
+    >
+      <form
+        method="dialog"
+        class="delete-confirm-form"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void confirmDelete();
+        }}
+      >
+        <h2 id="delete-title">Xóa nội dung?</h2>
+        <p>
+          {#if deleteTarget}
+            «{deleteTarget.title}» sẽ bị xóa vĩnh viễn khỏi hệ thống, không thể hoàn tác.
+          {:else}
+            Bài này sẽ bị xóa vĩnh viễn khỏi hệ thống, không thể hoàn tác.
+          {/if}
+        </p>
+        {#if deleteError}
+          <p class="notice error" role="alert">{deleteError}</p>
+        {/if}
+        <div class="delete-confirm-actions">
+          <button
+            type="button"
+            class="quiet"
+            disabled={deleting}
+            onclick={cancelDelete}
+          >
+            Hủy
+          </button>
+          <button type="submit" class="danger" disabled={deleting}>
+            {deleting ? "Đang xóa…" : "Xóa"}
+          </button>
+        </div>
+      </form>
+    </dialog>
+
 <style>
   h1,
   h2,
@@ -1944,8 +2071,7 @@
   .lede,
   .page-head p,
   .hint,
-  .item-description,
-  .review-note {
+  .item-description {
     margin: 0;
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
@@ -2084,8 +2210,14 @@
   .editor-actions {
     display: flex;
     flex-wrap: wrap;
+    flex: 0 0 auto;
     align-items: center;
     gap: var(--space-2);
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in oklab, var(--color-surface) 94%, transparent);
+    backdrop-filter: blur(8px);
   }
 
   .editor-actions-main,
@@ -2098,10 +2230,6 @@
 
   .editor-actions-more {
     margin-left: auto;
-  }
-
-  .editor-tabs {
-    display: none;
   }
 
   .poll-edit {
@@ -2122,8 +2250,7 @@
   .tabs button,
   .pager button,
   .editor-actions button:not(.quiet),
-  .chip,
-  .editor-tab {
+  .chip {
     min-height: 40px;
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
@@ -2231,7 +2358,9 @@
     letter-spacing: 0.01em;
   }
 
-  .open-card {
+  .open-card,
+  .delete-card,
+  .view-card {
     display: grid;
     place-items: center;
     width: 32px;
@@ -2241,9 +2370,12 @@
     background: transparent;
     color: var(--color-text-secondary);
     opacity: 0.75;
+    text-decoration: none;
   }
 
-  .open-card svg {
+  .open-card svg,
+  .delete-card svg,
+  .view-card svg {
     width: 18px;
     height: 18px;
     fill: none;
@@ -2254,8 +2386,66 @@
   }
 
   .open-card:hover,
-  .open-card:focus-visible {
+  .open-card:focus-visible,
+  .delete-card:hover,
+  .delete-card:focus-visible,
+  .view-card:hover,
+  .view-card:focus-visible {
     opacity: 1;
+  }
+
+  .view-card:hover,
+  .view-card:focus-visible {
+    color: var(--color-primary);
+  }
+
+  .delete-card:hover,
+  .delete-card:focus-visible {
+    color: #c45b5b;
+  }
+
+  .delete-confirm {
+    width: min(100% - 2rem, 22rem);
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 1.1rem;
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: 0 18px 48px color-mix(in oklab, #000 28%, transparent);
+  }
+
+  .delete-confirm::backdrop {
+    background: color-mix(in oklab, #000 42%, transparent);
+  }
+
+  .delete-confirm-form {
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+
+  .delete-confirm-form p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .delete-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .delete-confirm .danger {
+    border: 0;
+    border-radius: var(--radius-full);
+    background: #c45b5b;
+    color: #fff;
+  }
+
+  .delete-confirm .danger:hover {
+    background: #b04e4e;
   }
 
   .content-cards h2 {
@@ -2284,12 +2474,6 @@
     line-clamp: 2;
   }
 
-  .review-note {
-    margin: 0;
-    color: var(--color-error);
-    font-size: var(--text-xs);
-  }
-
   .content-cards .status {
     background: var(--color-surface-soft);
     color: var(--color-text-secondary);
@@ -2303,6 +2487,11 @@
     margin-top: auto;
     padding-top: var(--space-2);
     font-size: var(--text-sm);
+  }
+
+  .content-meta span.topic-missing {
+    color: #d4b44a;
+    font-weight: 600;
   }
 
   .content-meta span {
@@ -2356,11 +2545,19 @@
     color: var(--color-success);
   }
 
+  /*
+   * Cỡ modal cố định theo viewport — không co theo độ dài bài.
+   * Chừa ~0.75rem mỗi cạnh; form + body flex chiếm hết phần còn lại.
+   */
   .editor {
-    width: min(1080px, calc(100vw - 1.5rem));
-    max-height: calc(100dvh - 1.5rem);
+    --editor-inset: 1.5rem;
+    --editor-width: min(720px, calc(100vw - var(--editor-inset)));
+    --editor-height: calc(100dvh - var(--editor-inset));
+    width: var(--editor-width);
+    height: var(--editor-height);
+    max-height: var(--editor-height);
     padding: 0;
-    overflow: auto;
+    overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-background);
@@ -2378,13 +2575,20 @@
   }
 
   .editor-form {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-4);
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
     padding: var(--space-5);
+    overflow: hidden;
   }
 
   .editor-head {
     display: flex;
+    flex: 0 0 auto;
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-3);
@@ -2403,10 +2607,39 @@
   }
 
   .editor-body {
+    flex: 1 1 0;
     min-width: 0;
+    min-height: 0;
+    /* Kéo sát mép ngoài modal; nội dung vẫn cách lề bằng padding phải. */
+    margin-inline-end: calc(-1 * var(--space-5));
+    padding-inline-end: var(--space-5);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--color-text) 28%, transparent)
+      transparent;
+  }
+
+  .editor-body::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .editor-body::-webkit-scrollbar-track {
+    margin-block: 0.4rem;
+    background: transparent;
+  }
+
+  .editor-body::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-text) 28%, transparent);
+  }
+
+  .editor-body::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--color-text) 45%, transparent);
   }
 
   .editor-notice {
+    flex: 0 0 auto;
     margin: 0;
   }
 
@@ -2421,23 +2654,6 @@
     display: grid;
     align-content: start;
     gap: var(--space-3);
-  }
-
-  .preview {
-    display: grid;
-    justify-items: center;
-    align-content: start;
-    gap: var(--space-3);
-  }
-
-  .preview .field-label {
-    justify-self: stretch;
-  }
-
-  .editor-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.7fr);
-    gap: var(--space-5);
   }
 
   .split > label {
@@ -2588,62 +2804,6 @@
     width: 100%;
   }
 
-  /* Khung tỉ lệ ~ điện thoại 9:19.5 — co theo chiều cao modal. */
-  .preview-phone {
-    position: relative;
-    width: min(100%, 270px, calc(min(70dvh, 620px) * 9 / 19.5));
-    aspect-ratio: 9 / 19.5;
-    max-height: min(70dvh, 620px);
-    margin-inline: auto;
-    overflow: hidden;
-    border: 1px solid var(--color-border);
-    border-radius: 1.65rem;
-    background: var(--color-background);
-    box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--color-border) 55%, transparent),
-      0 18px 40px color-mix(in oklab, #000 22%, transparent);
-  }
-
-  .preview-stage {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    /* Chỉ xem — tránh bấm poll/video gọi API. */
-    pointer-events: none;
-  }
-
-  .preview-stage :global(.stage) {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    padding: 14px 16px 18px;
-  }
-
-  .preview-stage :global(.headline) {
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    font-size: clamp(1.2rem, 5.2vw, 1.55rem);
-    line-height: 1.35;
-    -webkit-line-clamp: 8;
-    line-clamp: 8;
-  }
-
-  .preview-stage :global(.headline.under-media) {
-    font-size: clamp(0.95rem, 4.2vw, 1.2rem);
-    line-height: 1.4;
-  }
-
-  .preview-stage :global(.frame) {
-    width: 100%;
-    max-height: 46%;
-  }
-
-  .preview-stage :global(.readmore) {
-    margin-top: 14px;
-    font-size: 0.7rem;
-  }
-
   .visually-hidden {
     position: absolute;
     width: 1px;
@@ -2707,22 +2867,29 @@
       line-clamp: 2;
     }
 
-    .open-card {
+    .open-card,
+    .delete-card,
+    .view-card {
       width: 44px;
       height: 44px;
     }
 
-    .open-card svg {
+    .open-card svg,
+    .delete-card svg,
+    .view-card svg {
       width: 20px;
       height: 20px;
     }
 
-    /* —— Editor: full sheet + tab Soạn | Xem trước —— */
+    /* —— Editor: full sheet —— */
     .editor {
-      width: 100vw;
+      --editor-inset: 0px;
+      --editor-width: 100vw;
+      --editor-height: 100dvh;
+      width: var(--editor-width);
       max-width: 100vw;
-      height: 100dvh;
-      max-height: 100dvh;
+      height: var(--editor-height);
+      max-height: var(--editor-height);
       margin: 0;
       overflow: hidden;
       border: 0;
@@ -2730,13 +2897,15 @@
     }
 
     .editor-form {
-      display: grid;
-      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      display: flex;
+      flex-direction: column;
       gap: 0;
-      height: 100dvh;
-      max-height: 100dvh;
+      width: 100%;
+      height: 100%;
+      max-height: 100%;
       padding: 0;
       padding-top: env(safe-area-inset-top);
+      overflow: hidden;
     }
 
     .editor-head {
@@ -2753,64 +2922,14 @@
       margin: var(--space-3) var(--space-4) 0;
     }
 
-    .editor-tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-1);
-      margin: var(--space-3) var(--space-4) 0;
-      padding: 0.2rem;
-      border-radius: var(--radius-full);
-      background: var(--color-surface-soft);
-    }
-
-    .editor-tab {
-      min-height: 2.35rem;
-      border: 0;
-      border-radius: var(--radius-full);
-      background: transparent;
-      color: var(--color-text-secondary);
-      font-weight: 600;
-    }
-
-    .editor-tab[aria-selected="true"] {
-      background: var(--color-surface);
-      color: var(--color-text);
-      box-shadow: 0 1px 2px color-mix(in oklab, #000 8%, transparent);
-    }
-
     .editor-body {
       min-height: 0;
+      margin-inline-end: 0;
       overflow: auto;
       overscroll-behavior: contain;
       padding: var(--space-4);
+      padding-inline-end: calc(var(--space-4) - 2px);
       padding-bottom: var(--space-3);
-    }
-
-    .editor-grid {
-      display: block;
-    }
-
-    .editor-grid[data-pane="compose"] .preview {
-      display: none;
-    }
-
-    .editor-grid[data-pane="preview"] .compose-pane {
-      display: none;
-    }
-
-    .preview {
-      justify-items: center;
-      padding-block: var(--space-2);
-    }
-
-    .preview-caption {
-      justify-self: stretch;
-      text-align: center;
-    }
-
-    .preview-phone {
-      width: min(100%, 280px, calc((100dvh - 14rem) * 9 / 19.5));
-      max-height: calc(100dvh - 14rem);
     }
 
     .editor-actions {
@@ -2820,9 +2939,7 @@
       margin: 0;
       padding: var(--space-3) var(--space-4);
       padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
-      border-top: 1px solid var(--color-border);
       background: color-mix(in oklab, var(--color-surface) 92%, transparent);
-      backdrop-filter: blur(8px);
     }
 
     .editor-actions-main {

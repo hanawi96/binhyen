@@ -160,6 +160,58 @@ describe("Content draft", () => {
     ).toBe(false);
   });
 
+  it("accepts a quote draft with required author", () => {
+    const result = parseContentDraft({
+      title: "Đời người ngắn lắm.",
+      format: "quote",
+      topics: ["perspective"],
+      moods: ["calm"],
+      sourceLabel: "Nguyễn Du"
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      format: "quote",
+      kind: "quote",
+      sourceLabel: "Nguyễn Du",
+      body: "",
+      pollOptions: []
+    });
+    expect(
+      parseContentDraft({
+        title: "Một câu nói",
+        format: "quote",
+        topics: ["peace"],
+        moods: ["calm"],
+        sourceLabel: ""
+      }).ok
+    ).toBe(false);
+  });
+
+  it("accepts a prompt draft without poll options or media", () => {
+    const result = parseContentDraft({
+      title: "Hôm nay bạn đang mang gì trong người?",
+      format: "prompt",
+      topics: ["peace"],
+      moods: ["tired"],
+      body: "Không cần trả lời to. Chỉ cần nhận ra là đủ."
+    });
+
+    expect(result.ok && result.value).toMatchObject({
+      format: "prompt",
+      body: "Không cần trả lời to. Chỉ cần nhận ra là đủ.",
+      imageUrl: "",
+      pollOptions: []
+    });
+    expect(
+      parseContentDraft({
+        title: "",
+        format: "prompt",
+        topics: ["peace"],
+        moods: ["calm"]
+      }).ok
+    ).toBe(false);
+  });
+
   it("ignores client kind, theme, category, and description", () => {
     const result = parseContentDraft({
       ...draft,

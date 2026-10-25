@@ -573,13 +573,14 @@ describe("loadPublicFeed trên SQL thật", () => {
   });
 
   it("feed gắn image / video / pollOptions từ bảng media và poll", async () => {
-    const slice = posts.slice(0, 3);
+    const slice = posts.slice(0, 4);
     const { db, sqlite } = setup(slice);
-    const [imageId, videoId, pollId] = slice.map((post) => post.id);
+    const [imageId, videoId, pollId, promptId] = slice.map((post) => post.id);
 
     sqlite.prepare(`UPDATE contents SET format = 'image' WHERE id = ?`).run(imageId);
     sqlite.prepare(`UPDATE contents SET format = 'video' WHERE id = ?`).run(videoId);
     sqlite.prepare(`UPDATE contents SET format = 'poll' WHERE id = ?`).run(pollId);
+    sqlite.prepare(`UPDATE contents SET format = 'prompt' WHERE id = ?`).run(promptId);
 
     sqlite
       .prepare(
@@ -610,7 +611,7 @@ describe("loadPublicFeed trên SQL thật", () => {
       topic: "all",
       mood: "all",
       cursor: null,
-      limit: 3,
+      limit: 4,
       origin: () => 0
     });
 
@@ -642,6 +643,9 @@ describe("loadPublicFeed trên SQL thật", () => {
       ]
     });
     expect(byId.get(pollId)).not.toHaveProperty("image");
+    expect(byId.get(promptId)).toMatchObject({ format: "prompt" });
+    expect(byId.get(promptId)).not.toHaveProperty("pollOptions");
+    expect(byId.get(promptId)).not.toHaveProperty("image");
   });
 
   it("có mã ẩn danh: gắn liked/saved vào thẻ trong cùng trang", async () => {

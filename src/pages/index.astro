@@ -11,7 +11,13 @@ import {
   readFeedViewer,
   resetViewerLoop
 } from "../features/feed/d1-viewer-state";
+import { attachViewerReactions } from "../features/feed/feed-rows";
 import { loadPublicFeed } from "../features/feed/load-public-feed";
+import {
+  loadPublishedCard,
+  prependFocusCard,
+  readFocusContentId
+} from "../features/feed/load-published-card";
 import { createD1MyPostStore } from "../features/posts/d1-my-posts";
 import BaseLayout from "../layouts/BaseLayout.astro";
 import AtmosphereBoot from "../features/feed/AtmosphereBoot.astro";
@@ -30,6 +36,7 @@ let initialTopics: Array<{ slug: string; label: string }> = [];
 
 const cookie = Astro.request.headers.get("cookie");
 const now = Math.floor(Date.now() / 1000);
+const focusId = readFocusContentId(Astro.url.searchParams.get("v"));
 
 // Song song user / catalog / feed — khong phu thuoc lan nhau.
 const [userBundle, topics, feedPage] = await Promise.all([
@@ -60,14 +67,31 @@ const [userBundle, topics, feedPage] = await Promise.all([
   (async () => {
     try {
       const viewer = await readFeedViewer(env.DB, cookie, now);
-      return await loadPublicFeed(env.DB, {
-        topic: "all",
-        mood: "all",
-        cursor: null,
-        limit: FIRST_PAGE_SIZE,
-        viewer,
-        onAllSeen: () => resetViewerLoop(env.DB, viewer, now)
-      });
+      const [page, focus] = await Promise.all([
+        loadPublicFeed(env.DB, {
+          topic: "all",
+          mood: "all",
+          cursor: null,
+          limit: FIRST_PAGE_SIZE,
+          viewer,
+          onAllSeen: () => resetViewerLoop(env.DB, viewer, now)
+        }),
+        focusId ? loadPublishedCard(env.DB, focusId) : Promise.resolve(null)
+      ]);
+
+      if (!focus) return page;
+
+      const [card] = await attachViewerReactions(
+        env.DB,
+        [focus],
+        viewer.actorId
+      );
+      if (!card) return page;
+
+      return {
+        ...page,
+        items: prependFocusCard(card, page.items, FIRST_PAGE_SIZE)
+      };
     } catch (error) {
       console.error("Homepage feed error:", error);
       return null;

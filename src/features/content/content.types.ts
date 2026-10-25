@@ -1,13 +1,15 @@
 
 /**
  * Dinh dang hien thi tren the (khac voi kind / chu de).
- * Hien chi viet 'text'; image / video / poll mo dan.
+ * audio se mo sau; prompt = cau hoi phan tu; quote = cau noi + tac gia.
  */
 export const contentFormats = [
   "text",
   "image",
   "video",
-  "poll"
+  "poll",
+  "prompt",
+  "quote"
 ] as const;
 
 export type ContentFormat = (typeof contentFormats)[number];

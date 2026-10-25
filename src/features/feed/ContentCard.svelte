@@ -40,6 +40,11 @@
       !!content.pollOptions &&
       content.pollOptions.length >= 2
   );
+  const showPrompt = $derived(content.format === "prompt");
+  const showQuote = $derived(content.format === "quote");
+  const quoteAuthor = $derived(
+    showQuote && content.source?.label ? content.source.label : ""
+  );
   const mediaMode = $derived(showImage || showVideo || showPoll);
 
   const imageRatio = $derived(imageAspectRatio(content.image));
@@ -96,6 +101,8 @@
   class="stage reading"
   class:media={mediaMode}
   class:poll={showPoll}
+  class:prompt={showPrompt}
+  class:quote={showQuote}
   class:out={leaving}
   aria-labelledby={`content-title-${content.id}`}
 >
@@ -103,6 +110,10 @@
     <div class="card-actions" data-feed-control>
       {@render actions()}
     </div>
+  {/if}
+
+  {#if showPrompt}
+    <p class="prompt-label">Nghĩ một chút</p>
   {/if}
 
   {#if showImage && content.image}
@@ -161,9 +172,15 @@
     id={`content-title-${content.id}`}
     class="headline"
     class:under-media={mediaMode}
+    class:prompt-headline={showPrompt}
+    class:quote-headline={showQuote}
   >
     {content.title}
   </h2>
+
+  {#if quoteAuthor}
+    <p class="quote-author">— {quoteAuthor}</p>
+  {/if}
 
   {#if content.hasArticle}
     <button type="button" class="readmore" onclick={() => onRead?.()}>
@@ -325,6 +342,17 @@
     margin-left: 4px;
   }
 
+  .prompt-label {
+    flex: 0 0 auto;
+    margin: 0 0 0.85rem;
+    color: color-mix(in oklab, var(--color-text) 58%, transparent);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
   .headline {
     flex: 0 0 auto;
     max-width: 820px;
@@ -341,6 +369,26 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 6;
     line-clamp: 6;
+  }
+
+  .headline.prompt-headline,
+  .headline.quote-headline {
+    max-width: 34rem;
+    font-size: clamp(28px, 4.6vw, 52px);
+    line-height: 1.4;
+    -webkit-line-clamp: 8;
+    line-clamp: 8;
+  }
+
+  .quote-author {
+    flex: 0 0 auto;
+    max-width: 34rem;
+    margin: 0.85rem 0 0;
+    color: color-mix(in oklab, var(--color-text) 62%, transparent);
+    font-size: clamp(14px, 2.2vw, 18px);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
   }
 
   /**
@@ -406,6 +454,16 @@
       font-size: clamp(30px, 8vw, 48px);
       letter-spacing: -0.02em;
       line-height: 1.38;
+    }
+
+    .headline.prompt-headline,
+    .headline.quote-headline {
+      font-size: clamp(26px, 7vw, 40px);
+      line-height: 1.42;
+    }
+
+    .quote-author {
+      font-size: clamp(13px, 3.6vw, 16px);
     }
 
     .headline.under-media {

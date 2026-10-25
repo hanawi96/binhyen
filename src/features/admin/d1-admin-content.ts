@@ -29,6 +29,7 @@ export interface AdminListItem {
   title: string;
   description: string;
   category: string;
+  format: ContentFormat;
   kind: ContentKind;
   theme: ContentTheme;
   status: ContentStatus;
@@ -91,6 +92,7 @@ interface ListRow {
   title: string;
   description: string;
   category: string;
+  format: string;
   kind: string;
   theme: string;
   status: string;
@@ -293,7 +295,7 @@ export async function listAdminContents(
     db
       .prepare(
         `SELECT
-           c.id, c.title, c.description, c.category, c.kind, c.theme,
+           c.id, c.title, c.description, c.category, c.format, c.kind, c.theme,
            c.status, c.created_at, c.updated_at,
            (
              SELECT group_concat(ct.topic_slug, ',')
@@ -371,6 +373,7 @@ export async function listAdminContents(
       title: row.title,
       description: row.description,
       category: row.category,
+      format: readContentFormat(row.format),
       kind,
       theme,
       status,
@@ -636,7 +639,8 @@ function childStatements(
   if (
     (draft.format === "text" ||
       draft.format === "image" ||
-      draft.format === "video") &&
+      draft.format === "video" ||
+      draft.format === "prompt") &&
     draft.body
   ) {
     statements.push(
@@ -868,6 +872,19 @@ export async function updateAdminContent(
   }
 
   return saved;
+}
+
+/** Xoa bai khoi DB (CASCADE sang bang con). Tra ve false neu khong tim thay. */
+export async function deleteAdminContent(
+  db: D1Database,
+  id: string
+): Promise<boolean> {
+  const result = await db
+    .prepare(`DELETE FROM contents WHERE id = ?1`)
+    .bind(id)
+    .run();
+
+  return (result.meta.changes ?? 0) === 1;
 }
 
 export function respondAdminError(error: unknown): Response {
