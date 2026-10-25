@@ -355,10 +355,13 @@ async function startAmbientAfterIdle(): Promise<void> {
   }
 }
 
+/** Choi thap nhat truoc khi tai catalog/audio — idle co the chay qua som. */
+const AMBIENT_MIN_DELAY_MS = 3200;
+
 /**
- * Doc preference ngay (UI dung); catalog + audio doi idle/LCP
- * de khong tranh bandwidth/CPU voi first paint. Mo panel van goi
- * ensureAmbientReady() de catalog san sang som hon.
+ * Doc preference ngay (UI dung); catalog + audio doi toi thieu ~3.2s
+ * roi moi idle, tranh tranh bandwidth voi first paint.
+ * Mo panel / bat nhac: ensureAmbientReady() van tai som.
  */
 export function hydrateAmbientPrefs(): void {
   if (hydrated) return;
@@ -373,11 +376,14 @@ export function hydrateAmbientPrefs(): void {
     void startAmbientAfterIdle();
   };
 
-  if (typeof window.requestIdleCallback === "function") {
-    deferredIdle = window.requestIdleCallback(kick, { timeout: 4000 });
-  } else {
-    deferredStart = window.setTimeout(kick, 2500);
-  }
+  deferredStart = window.setTimeout(() => {
+    deferredStart = null;
+    if (typeof window.requestIdleCallback === "function") {
+      deferredIdle = window.requestIdleCallback(kick, { timeout: 1500 });
+    } else {
+      kick();
+    }
+  }, AMBIENT_MIN_DELAY_MS);
 }
 
 /** Dam bao catalog da tai (mo panel / bat nhac truoc idle). */

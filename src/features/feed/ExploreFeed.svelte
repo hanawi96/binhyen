@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import type { AccountUser } from "../account/account-client";
   import type { ContentItem } from "../content/content.types";
-  import { scheduleHomeBootCheck } from "./boot-check";
+  import DebugPanel from "../debug/DebugPanel.svelte";
   import SwipeDeck from "./SwipeDeck.svelte";
 
   export interface CollectionView {
@@ -35,10 +34,6 @@
     initialTopics?: Array<{ slug: string; label: string }>;
     collection?: CollectionView | null;
   } = $props();
-
-  onMount(() => {
-    scheduleHomeBootCheck();
-  });
 </script>
 
 <div class="explore-page">
@@ -53,6 +48,7 @@
     {initialTopics}
     {collection}
   />
+  <DebugPanel />
 </div>
 
 <style>
