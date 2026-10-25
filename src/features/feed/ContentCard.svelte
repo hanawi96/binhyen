@@ -167,7 +167,7 @@
 
   {#if content.hasArticle}
     <button type="button" class="readmore" onclick={() => onRead?.()}>
-      Đọc thêm ↗
+      Đọc thêm...
     </button>
   {/if}
 

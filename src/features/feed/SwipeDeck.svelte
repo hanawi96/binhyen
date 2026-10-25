@@ -1,6 +1,6 @@
 
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import ContentCard from "./ContentCard.svelte";
   import CollectionPager from "./CollectionPager.svelte";
   import { demoContents } from "../content/demo-contents";
@@ -47,6 +47,7 @@
     writeRecentSeen
   } from "./recent-seen";
   import { createSeenReporter } from "./report-seen";
+  import { fetchPollState } from "./poll-client";
 
   let {
     initialItems = [],
@@ -164,12 +165,21 @@
   // Bo ket qua cu neu bo loc thay doi khi dang tai.
   let feedVersion = 0;
 
-  const ANIMATION_MS = 400;
-  const SWIPE_DISTANCE = 70;
+  /** Snap dọc do JS điều khiển (không phụ thuộc CSS transitionend).
+   * Ngắn để bài cũ kéo khỏi viewport nhanh — không fade opacity. */
+  const SNAP_MS_MIN = 140;
+  const SNAP_MS_MAX = 240;
+  const SNAP_MS_DEFAULT = 180;
+  const ANIMATION_MS = SNAP_MS_DEFAULT;
+  /** Vuốt dọc: ngưỡng thấp kiểu TikTok — flick nhẹ cũng next. */
+  const SWIPE_DISTANCE = 48;
   const READ_SWIPE_DISTANCE = 56;
   const AXIS_LOCK = 10;
-  const MIN_FAST_DISTANCE = 30;
-  const FAST_VELOCITY = 0.65;
+  const MIN_FAST_DISTANCE = 18;
+  const FAST_VELOCITY = 0.32;
+  /** Cao su ở biên: càng kéo càng nặng. */
+  const EDGE_RESIST_START = 0.42;
+  const EDGE_RESIST_END = 0.2;
 
   let deckElement: HTMLDivElement;
 
@@ -196,47 +206,74 @@
     articleError = "";
   }
 
+  /** Body markdown đã tải — mở đọc không chờ mạng. */
+  const ARTICLE_CACHE_MAX = 16;
+  const articleCache = new Map<string, string>();
+  const articleInflight = new Map<string, Promise<string | null>>();
+
+  function rememberArticle(id: string, body: string) {
+    if (articleCache.has(id)) articleCache.delete(id);
+    articleCache.set(id, body);
+    while (articleCache.size > ARTICLE_CACHE_MAX) {
+      const oldest = articleCache.keys().next().value;
+      if (oldest === undefined) break;
+      articleCache.delete(oldest);
+    }
+  }
+
+  function applyArticleBody(item: ReadItem, body: string) {
+    let blocks = readBlocks(body);
+    if (
+      blocks[0]?.kind === "heading" &&
+      blocks[0].text === item.title
+    ) {
+      blocks = blocks.slice(1);
+    }
+    articleBlocks = blocks;
+    articleForId = item.id;
+    articleReady = true;
+    articleError = "";
+  }
+
+  function loadArticleBody(id: string): Promise<string | null> {
+    const cached = articleCache.get(id);
+    if (cached !== undefined) return Promise.resolve(cached);
+
+    const pending = articleInflight.get(id);
+    if (pending) return pending;
+
+    const request = fetch(`/api/contents/${encodeURIComponent(id)}`)
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const body = articleBody(await response.json());
+        if (body !== null) rememberArticle(id, body);
+        return body;
+      })
+      .catch(() => null)
+      .finally(() => {
+        articleInflight.delete(id);
+      });
+
+    articleInflight.set(id, request);
+    return request;
+  }
+
+  function prefetchArticle(id: string | undefined) {
+    if (!id || articleCache.has(id)) return;
+    void loadArticleBody(id);
+  }
+
   function fetchArticleFor(item: ReadItem, serial: number) {
     const openedId = item.id;
-    void fetch(`/api/contents/${encodeURIComponent(openedId)}`)
-      .then(async (response) => {
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-        if (!response.ok) {
-          clearArticleBody();
-          articleError = "Không mở được bài.";
-          return;
-        }
-
-        const body = articleBody(await response.json());
-
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-        if (body === null) {
-          clearArticleBody();
-          articleError = "Không mở được bài.";
-          return;
-        }
-
-        let blocks = readBlocks(body);
-
-        if (
-          blocks[0]?.kind === "heading" &&
-          blocks[0].text === item.title
-        ) {
-          blocks = blocks.slice(1);
-        }
-
-        if (serial !== readSerial || readItem?.id !== openedId) return;
-
-        articleBlocks = blocks;
-        articleForId = openedId;
-        articleReady = true;
-        articleError = "";
-      })
-      .catch(() => {
-        if (serial !== readSerial || readItem?.id !== openedId) return;
+    void loadArticleBody(openedId).then((body) => {
+      if (serial !== readSerial || readItem?.id !== openedId) return;
+      if (body === null) {
         clearArticleBody();
         articleError = "Không mở được bài.";
-      });
+        return;
+      }
+      applyArticleBody(item, body);
+    });
   }
 
   // Thich / luu / chia se. Cookie an danh chi tao o lan bam dau tien.
@@ -994,6 +1031,49 @@
     }
   });
 
+  /** URL / poll đã warm — tránh prefetch trùng. */
+  const warmedMedia = new Set<string>();
+
+  function warmMediaUrl(url: string | undefined | null) {
+    if (!url || warmedMedia.has(url) || typeof Image === "undefined") return;
+    warmedMedia.add(url);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+  }
+
+  function warmItem(item: ContentItem | undefined) {
+    if (!item) return;
+    warmMediaUrl(item.image?.url);
+    warmMediaUrl(item.video?.poster);
+    if (
+      item.format === "poll" &&
+      item.pollOptions &&
+      item.pollOptions.length >= 2 &&
+      !warmedMedia.has(`poll:${item.id}`)
+    ) {
+      warmedMedia.add(`poll:${item.id}`);
+      void fetchPollState(item.id).catch(() => undefined);
+    }
+  }
+
+  // Warm ảnh/poster/poll cho thẻ đang xem và ±1 trước khi vuốt tới.
+  $effect(() => {
+    for (const index of [currentIndex - 1, currentIndex, currentIndex + 1]) {
+      if (index < 0 || index >= contents.length) continue;
+      warmItem(contents[index]);
+    }
+  });
+
+  // Prefetch body bài (hasArticle) cho current ± 1 — mở đọc không chờ GET.
+  $effect(() => {
+    for (const index of [currentIndex - 1, currentIndex, currentIndex + 1]) {
+      if (index < 0 || index >= contents.length) continue;
+      const item = contents[index];
+      if (item?.hasArticle) prefetchArticle(item.id);
+    }
+  });
+
   // STEP11_SESSION_HISTORY
   const seenIds = new Set<string>();
   let seenCount = $state(0);
@@ -1135,15 +1215,16 @@
   /** none = chua khoa truc; y = doi the; x = mo doc bai */
   let dragAxis: "none" | "x" | "y" = "none";
 
-  // Animation state
+  // Animation state — offset dọc điều khiển bằng rAF (ổn định trên mobile).
   let pendingIndex: number | null = null;
   let dragFrame = 0;
-  let transitionFrame1 = 0;
-  let transitionFrame2 = 0;
-  let fallbackTimer = 0;
+  let offsetAnim = 0;
   let queuedOffset = 0;
   let queuedDragX = 0;
   let deckHeight = 1;
+  let currentOffsetPx = 0;
+  let snapLock = $state(false);
+  let completingTransition = false;
 
   function measureDeck() {
     if (!deckElement) return deckHeight;
@@ -1152,19 +1233,8 @@
     return deckHeight;
   }
 
-  function placeSlide(node: HTMLElement) {
-    const previous = node.style.transition;
-    node.style.transition = "none";
-
-    const frame = requestAnimationFrame(() => {
-      node.style.transition = previous;
-    });
-
-    return {
-      destroy() {
-        cancelAnimationFrame(frame);
-      }
-    };
+  function placeSlide(_node: HTMLElement) {
+    return {};
   }
 
   function cancelProgressAnim() {
@@ -1174,44 +1244,104 @@
     }
   }
 
-  function animateCollectionProgress(target: number) {
-    if (!collectionMode) {
-      collectionProgress = target;
-      return;
+  /** Gần tuyến tính, hơi chậm cuối — bài cũ thoát viewport nhanh, không “trôi” lâu. */
+  function easeOutQuad(t: number): number {
+    return 1 - (1 - t) * (1 - t);
+  }
+
+  /** Thời lượng snap theo quãng còn lại và vận tốc (px/ms). */
+  function snapDurationMs(
+    distancePx: number,
+    velocityPxPerMs: number
+  ): number {
+    const distance = Math.abs(distancePx);
+    if (distance < 1) return SNAP_MS_MIN;
+
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return 1;
     }
 
-    cancelProgressAnim();
-    const from = collectionProgress;
-    const start = performance.now();
+    // Sàn tốc độ cao hơn → không kéo dài snap khi vuốt chậm.
+    const speed = Math.max(Math.abs(velocityPxPerMs), 0.35);
+    const estimated = distance / speed;
+    return Math.min(
+      SNAP_MS_MAX,
+      Math.max(SNAP_MS_MIN, estimated)
+    );
+  }
 
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / ANIMATION_MS);
-      const eased = 1 - (1 - t) ** 3;
-      collectionProgress = from + (target - from) * eased;
-      if (t < 1) {
-        progressAnim = requestAnimationFrame(step);
-        return;
-      }
-      progressAnim = 0;
-      collectionProgress = target;
-    };
+  function cancelOffsetAnim() {
+    if (offsetAnim) {
+      cancelAnimationFrame(offsetAnim);
+      offsetAnim = 0;
+    }
+  }
 
-    progressAnim = requestAnimationFrame(step);
+  /**
+   * Bài đang rời: mờ hết rất sớm (~35% chiều cao) — đã ẩn trước khi chạm mép trên.
+   */
+  function leaveOpacityForOffset(offset: number): number {
+    const height = Math.max(
+      deckElement?.clientHeight ?? deckHeight,
+      1
+    );
+    const progress = Math.min(1, Math.abs(offset) / height);
+    const fadeEnd = 0.35;
+    if (progress <= 0) return 1;
+    if (progress >= fadeEnd) return 0;
+    return 1 - progress / fadeEnd;
+  }
+
+  function writeLeaveOpacity(offset: number) {
+    if (!deckElement) return;
+    deckElement.style.setProperty(
+      "--leave-opacity",
+      String(leaveOpacityForOffset(offset))
+    );
   }
 
   function setOffset(value: number) {
+    currentOffsetPx = value;
     if (!deckElement) return;
 
-    deckElement.style.setProperty(
-      "--drag-offset",
-      `${value}px`
-    );
+    deckElement.style.setProperty("--drag-offset", `${value}px`);
+    writeLeaveOpacity(value);
 
-    if (collectionMode && dragging && !animating) {
+    if (collectionMode && (dragging || animating)) {
       const height = Math.max(deckHeight, 1);
       collectionProgress = currentIndex - value / height;
     }
   }
+
+  /** Ghi index + offset cùng lúc trên DOM — tránh 1 frame bài cũ nhảy về (offset=0 trước khi Svelte cập nhật %). */
+  function applyDeckPosition(index: number, offset: number) {
+    currentOffsetPx = offset;
+    queuedOffset = offset;
+    if (!deckElement) return;
+
+    deckElement.style.setProperty("--deck-index", String(index));
+    deckElement.style.setProperty("--drag-offset", `${offset}px`);
+    writeLeaveOpacity(offset);
+
+    if (collectionMode) {
+      const height = Math.max(deckHeight, 1);
+      collectionProgress =
+        dragging || animating ? index - offset / height : index;
+    }
+  }
+
+  function syncDeckIndex(index: number) {
+    if (!deckElement) return;
+    deckElement.style.setProperty("--deck-index", String(index));
+  }
+
+  // Đồng bộ --deck-index khi currentIndex đổi ngoài applyDeckPosition.
+  $effect(() => {
+    syncDeckIndex(currentIndex);
+  });
 
   function setDragX(value: number) {
     if (!deckElement) return;
@@ -1247,44 +1377,70 @@
   }
 
   function clearTransitionTasks() {
-    if (transitionFrame1) {
-      cancelAnimationFrame(transitionFrame1);
-      transitionFrame1 = 0;
-    }
-
-    if (transitionFrame2) {
-      cancelAnimationFrame(transitionFrame2);
-      transitionFrame2 = 0;
-    }
-
-    if (fallbackTimer) {
-      clearTimeout(fallbackTimer);
-      fallbackTimer = 0;
-    }
+    cancelOffsetAnim();
   }
 
-  function completeTransition() {
-    if (!animating) return;
+  function animateOffsetTo(
+    target: number,
+    durationMs: number,
+    onDone: () => void
+  ) {
+    cancelOffsetAnim();
+    const from = currentOffsetPx;
+    const duration = Math.max(1, durationMs);
+    const start = performance.now();
 
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      setOffset(from + (target - from) * easeOutQuad(t));
+      if (t < 1) {
+        offsetAnim = requestAnimationFrame(step);
+        return;
+      }
+      offsetAnim = 0;
+      setOffset(target);
+      onDone();
+    };
+
+    offsetAnim = requestAnimationFrame(step);
+  }
+
+  /**
+   * Đổi index + về offset 0 trong một nhịp (không nháy bài cũ).
+   * Gọi khi offset đã tới ±H (hoặc 0 nếu hủy).
+   * Quan trọng: --deck-index và --drag-offset phải ghi DOM đồng thời —
+   * nếu chỉ setOffset(0) trước khi Svelte kịp đổi %, bài cũ nháy lại ở mép trên.
+   */
+  async function completeTransition() {
+    if (!animating || completingTransition) return;
+    completingTransition = true;
     clearTransitionTasks();
+    cancelDragFrame();
 
     const nextIndex = pendingIndex;
+    pendingIndex = null;
 
-    // Reset offset va cap nhat index trong cung mot lan.
-    setOffset(0);
+    snapLock = true;
 
     if (nextIndex !== null) {
       currentIndex = nextIndex;
+      applyDeckPosition(nextIndex, 0);
+    } else {
+      queuedOffset = 0;
+      setOffset(0);
     }
-
-    pendingIndex = null;
-    animating = false;
     cancelProgressAnim();
-    if (collectionMode) {
+    if (collectionMode && nextIndex === null) {
       collectionProgress = currentIndex;
     }
 
-    // Chi tai them sau khi chuyen the hoan tat.
+    await tick();
+    void deckElement?.offsetHeight;
+
+    snapLock = false;
+    animating = false;
+    completingTransition = false;
+
     if (
       nextIndex !== null &&
       hasMore &&
@@ -1294,7 +1450,11 @@
     }
   }
 
-  function startTransition(nextIndex: number | null, targetOffset: number) {
+  function startTransition(
+    nextIndex: number | null,
+    targetOffset: number,
+    durationMs = SNAP_MS_DEFAULT
+  ) {
     if (animating) return;
 
     dragging = false;
@@ -1303,37 +1463,18 @@
     setDragX(0);
     animating = true;
     pendingIndex = nextIndex;
+    snapLock = true;
 
-    if (collectionMode) {
-      animateCollectionProgress(nextIndex ?? currentIndex);
-    }
-
-    // Ton trong cai dat giam chuyen dong.
     if (
-      window.matchMedia(
-        "(prefers-reduced-motion: reduce)"
-      ).matches
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
-      completeTransition();
+      void completeTransition();
       return;
     }
 
-    // Tach viec bo trang thai dragging va bat
-    // transition sang hai khung hinh.
-    transitionFrame1 = requestAnimationFrame(() => {
-      transitionFrame1 = 0;
-
-      transitionFrame2 = requestAnimationFrame(() => {
-        transitionFrame2 = 0;
-
-        setOffset(targetOffset);
-
-        // Du phong truong hop transitionend khong chay.
-        fallbackTimer = window.setTimeout(
-          completeTransition,
-          ANIMATION_MS + 150
-        );
-      });
+    animateOffsetTo(targetOffset, durationMs, () => {
+      void completeTransition();
     });
   }
 
@@ -1412,7 +1553,7 @@
           } else {
             contents = page.items;
             currentIndex = 0;
-            setOffset(0);
+            applyDeckPosition(0, 0);
           }
         } else {
           const loadedIds = new Set(contents.map((item) => item.id));
@@ -1634,7 +1775,8 @@
   let fadeSerial = 0;
 
   const READING_MS = 200;
-  const WHEEL_COOLDOWN_MS = 580;
+  /** Khớp snap slide — tránh cuộn đè animation. */
+  const WHEEL_COOLDOWN_MS = 360;
 
   let topicFading = false;
   let fadeOutUntil = 0;
@@ -1652,7 +1794,7 @@
       contents = pendingItems;
       currentIndex = 0;
       pendingItems = null;
-      setOffset(0);
+      applyDeckPosition(0, 0);
     }
   }
 
@@ -1684,7 +1826,7 @@
       contents = items;
       currentIndex = 0;
       pendingItems = null;
-      setOffset(0);
+      applyDeckPosition(0, 0);
 
       readingTimer = window.setTimeout(() => {
         if (serial !== fadeSerial) return;
@@ -1701,50 +1843,9 @@
     }, Math.max(0, fadeOutUntil - performance.now()));
   }
 
+  /** Đổi bài (wheel/phím): cùng slide+snap với vuốt — không fade lệch cảm giác. */
   function fadeMove(direction: 1 | -1) {
-    if (dragging || animating || replaceOnLoad) return;
-
-    const nextIndex = currentIndex + direction;
-
-    if (nextIndex < 0 || nextIndex >= contents.length) return;
-
-    const serial = ++fadeSerial;
-    animating = true;
-    fadeSwap = true;
-    readingOut = true;
-    if (collectionMode) {
-      animateCollectionProgress(nextIndex);
-    }
-
-    readingTimer = window.setTimeout(() => {
-      if (serial !== fadeSerial) return;
-
-      setOffset(0);
-      currentIndex = nextIndex;
-      if (collectionMode) {
-        cancelProgressAnim();
-        collectionProgress = nextIndex;
-      }
-
-      readingTimer = window.setTimeout(() => {
-        if (serial !== fadeSerial) return;
-
-        readingOut = false;
-        readingTimer = window.setTimeout(() => {
-          if (serial !== fadeSerial) return;
-
-          fadeSwap = false;
-          animating = false;
-
-          if (
-            hasMore &&
-            contents.length - currentIndex - 1 <= PREFETCH_REMAINING
-          ) {
-            void loadMore();
-          }
-        }, READING_MS);
-      }, 32);
-    }, READING_MS);
+    navigate(direction);
   }
 
   function articleBody(value: unknown): string | null {
@@ -1783,7 +1884,13 @@
     window.clearTimeout(readerShowTimer);
 
     const serial = ++readSerial;
-    clearArticleBody();
+    const cached = articleCache.get(item.id);
+    if (cached !== undefined) {
+      applyArticleBody(item, cached);
+    } else {
+      clearArticleBody();
+    }
+
     readItem = item;
     readFromMine = fromMine;
     readerDismissing = false;
@@ -1802,7 +1909,7 @@
       });
     }, 16);
 
-    fetchArticleFor(item, serial);
+    if (cached === undefined) fetchArticleFor(item, serial);
   }
 
   /* Giống header/topbar: opacity + dịch 12px, 200ms ease. */
@@ -1851,10 +1958,9 @@
     window.clearTimeout(readerShowTimer);
     closeTimer = window.setTimeout(() => {
       queuedDragX = 0;
-      queuedOffset = 0;
       setDragX(0);
-      setOffset(0);
       currentIndex = nextIndex;
+      applyDeckPosition(nextIndex, 0);
       reading = false;
       readItem = null;
       readFromMine = false;
@@ -2040,7 +2146,7 @@
 
     lastWheel = now;
     event.preventDefault();
-    fadeMove(event.deltaY > 0 ? 1 : -1);
+    navigate(event.deltaY > 0 ? 1 : -1);
   }
 
   // Chu de yeu thich doi thi "Danh cho ban" xep lai tu dau.
@@ -2079,7 +2185,8 @@
 
     startTransition(
       nextIndex,
-      direction === 1 ? -height : height
+      direction === 1 ? -height : height,
+      SNAP_MS_DEFAULT
     );
   }
 
@@ -2088,12 +2195,16 @@
 
     let offset = Math.max(-limit, Math.min(limit, distance));
 
-    // Luc can o dau va cuoi danh sach.
+    // Biên danh sách: càng kéo càng nặng (cao su).
     if (
       (offset > 0 && !canPrevious) ||
       (offset < 0 && !canNext)
     ) {
-      offset *= 0.25;
+      const t = Math.min(1, Math.abs(offset) / limit);
+      const resist =
+        EDGE_RESIST_START -
+        (EDGE_RESIST_START - EDGE_RESIST_END) * t;
+      offset *= resist;
     }
 
     return offset;
@@ -2184,6 +2295,8 @@
         dragAxis = "x";
         queuedOffset = 0;
         setOffset(0);
+        // Ưu tiên tải body ngay khi bắt đầu vuốt ngang mở bài.
+        prefetchArticle(contents[currentIndex]?.id);
       } else if (ady >= adx) {
         dragAxis = "y";
         queuedDragX = 0;
@@ -2269,14 +2382,21 @@
       return;
     }
 
-    const velocity = Math.abs(distance) / elapsed;
+    const velocityPxPerMs = Math.abs(distance) / elapsed;
     const height = measureDeck();
-    setOffset(getDragOffset(distance));
+    const from = getDragOffset(distance);
+    cancelDragFrame();
+    queuedOffset = from;
+    setOffset(from);
     queuedDragX = 0;
     setDragX(0);
 
     if (cancelled || axis === "none" || Math.abs(distance) < 5) {
-      startTransition(null, 0);
+      startTransition(
+        null,
+        0,
+        snapDurationMs(from, velocityPxPerMs)
+      );
       return;
     }
 
@@ -2284,30 +2404,35 @@
       Math.abs(distance) >= SWIPE_DISTANCE ||
       (
         Math.abs(distance) >= MIN_FAST_DISTANCE &&
-        velocity >= FAST_VELOCITY
+        velocityPxPerMs >= FAST_VELOCITY
       );
 
     if (!shouldNavigate) {
-      startTransition(null, 0);
+      startTransition(
+        null,
+        0,
+        snapDurationMs(from, velocityPxPerMs)
+      );
       return;
     }
 
-    const direction: 1 | -1 =
-      distance < 0 ? 1 : -1;
-
+    const direction: 1 | -1 = distance < 0 ? 1 : -1;
     const nextIndex = currentIndex + direction;
 
-    if (
-      nextIndex < 0 ||
-      nextIndex >= contents.length
-    ) {
-      startTransition(null, 0);
+    if (nextIndex < 0 || nextIndex >= contents.length) {
+      startTransition(
+        null,
+        0,
+        snapDurationMs(from, velocityPxPerMs)
+      );
       return;
     }
 
+    const target = direction === 1 ? -height : height;
     startTransition(
       nextIndex,
-      direction === 1 ? -height : height
+      target,
+      snapDurationMs(target - from, velocityPxPerMs)
     );
   }
 
@@ -2315,22 +2440,6 @@
     if (activePointerId === event.pointerId) {
       finishDrag(event, true);
     }
-  }
-
-  function handleTransitionEnd(
-    event: TransitionEvent,
-    index: number
-  ) {
-    if (!animating) return;
-
-    if (event.propertyName !== "transform") return;
-
-    if (event.target !== event.currentTarget) return;
-
-    // Chi lay su kien tu the dang hien thi.
-    if (index !== currentIndex) return;
-
-    completeTransition();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -2554,6 +2663,7 @@
   <div
     class="deck-viewport"
     class:dragging={dragging}
+    class:snap-lock={snapLock}
     class:fade-swap={fadeSwap}
     inert={reading || sheetOpen}
     bind:this={deckElement}
@@ -2579,8 +2689,7 @@
         class:inactive={!isActive}
         aria-hidden={!isActive}
         inert={!isActive}
-        style={`transform: translate3d(${isActive ? "var(--drag-x, 0px)" : "0px"}, calc(${(index - currentIndex) * 100}% + var(--drag-offset, 0px)), 0);`}
-        ontransitionend={(event) => handleTransitionEnd(event, index)}
+        style={`--slide-index: ${index}; transform: translate3d(${isActive ? "var(--drag-x, 0px)" : "0px"}, calc((var(--slide-index) - var(--deck-index, 0)) * 100% + var(--drag-offset, 0px)), 0);`}
       >
         <ContentCard
           {content}
@@ -3074,23 +3183,27 @@
     position: absolute;
     inset: 0;
     backface-visibility: hidden;
-    transition: transform var(--duration-slow) var(--ease-standard);
+    /* Offset do rAF — không CSS transition (tránh lệch / nháy trên mobile). */
+    transition: none;
+    will-change: transform, opacity;
+    /* Bài đang xem: mờ theo --leave-opacity khi vuốt dọc. */
+    opacity: var(--leave-opacity, 1);
   }
 
-  /* Trong luc keo, di chuyen truc tiep theo ngon tay. */
-  .deck-viewport.dragging .slide,
-  .deck-viewport.fade-swap .slide {
-    transition: none;
+  /* Bài ±1 luôn rõ — chỉ bài đang rời mới mờ. */
+  .slide.inactive {
+    opacity: 1;
+    pointer-events: none;
+  }
+
+  .deck-viewport:not(.dragging):not(.snap-lock) .slide {
+    will-change: auto;
   }
 
   .deck-viewport.fade-swap .slide.inactive :global(.reading) {
     opacity: 0;
     transform: translateY(-16px);
     transition: none !important;
-  }
-
-  .slide.inactive {
-    pointer-events: none;
   }
 
   .slide :global(.content-card) {
