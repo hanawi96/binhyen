@@ -165,12 +165,10 @@
   // Bo ket qua cu neu bo loc thay doi khi dang tai.
   let feedVersion = 0;
 
-  /** Snap dọc do JS điều khiển (không phụ thuộc CSS transitionend).
-   * Ngắn để bài cũ kéo khỏi viewport nhanh — không fade opacity. */
+  /** Snap dọc bằng rAF; ngắn + leave-opacity để bài cũ ẩn sớm. */
   const SNAP_MS_MIN = 140;
   const SNAP_MS_MAX = 240;
   const SNAP_MS_DEFAULT = 180;
-  const ANIMATION_MS = SNAP_MS_DEFAULT;
   /** Vuốt dọc: ngưỡng thấp kiểu TikTok — flick nhẹ cũng next. */
   const SWIPE_DISTANCE = 48;
   const READ_SWIPE_DISTANCE = 56;
@@ -1057,20 +1055,14 @@
     }
   }
 
-  // Warm ảnh/poster/poll cho thẻ đang xem và ±1 trước khi vuốt tới.
-  $effect(() => {
-    for (const index of [currentIndex - 1, currentIndex, currentIndex + 1]) {
-      if (index < 0 || index >= contents.length) continue;
-      warmItem(contents[index]);
-    }
-  });
-
-  // Prefetch body bài (hasArticle) cho current ± 1 — mở đọc không chờ GET.
+  // Warm media/poll + prefetch body bài cho current ± 1.
   $effect(() => {
     for (const index of [currentIndex - 1, currentIndex, currentIndex + 1]) {
       if (index < 0 || index >= contents.length) continue;
       const item = contents[index];
-      if (item?.hasArticle) prefetchArticle(item.id);
+      if (!item) continue;
+      warmItem(item);
+      if (item.hasArticle) prefetchArticle(item.id);
     }
   });
 
@@ -1233,10 +1225,6 @@
     return deckHeight;
   }
 
-  function placeSlide(_node: HTMLElement) {
-    return {};
-  }
-
   function cancelProgressAnim() {
     if (progressAnim) {
       cancelAnimationFrame(progressAnim);
@@ -1280,27 +1268,13 @@
     }
   }
 
-  /**
-   * Bài đang rời: mờ hết rất sớm (~35% chiều cao) — đã ẩn trước khi chạm mép trên.
-   */
+  /** Bài đang rời: mờ hết ~35% H — đã ẩn trước khi chạm mép trên. */
   function leaveOpacityForOffset(offset: number): number {
-    const height = Math.max(
-      deckElement?.clientHeight ?? deckHeight,
-      1
-    );
+    const height = Math.max(deckHeight, 1);
     const progress = Math.min(1, Math.abs(offset) / height);
-    const fadeEnd = 0.35;
     if (progress <= 0) return 1;
-    if (progress >= fadeEnd) return 0;
-    return 1 - progress / fadeEnd;
-  }
-
-  function writeLeaveOpacity(offset: number) {
-    if (!deckElement) return;
-    deckElement.style.setProperty(
-      "--leave-opacity",
-      String(leaveOpacityForOffset(offset))
-    );
+    if (progress >= 0.35) return 0;
+    return 1 - progress / 0.35;
   }
 
   function setOffset(value: number) {
@@ -1308,34 +1282,29 @@
     if (!deckElement) return;
 
     deckElement.style.setProperty("--drag-offset", `${value}px`);
-    writeLeaveOpacity(value);
+    deckElement.style.setProperty(
+      "--leave-opacity",
+      String(leaveOpacityForOffset(value))
+    );
 
     if (collectionMode && (dragging || animating)) {
-      const height = Math.max(deckHeight, 1);
-      collectionProgress = currentIndex - value / height;
-    }
-  }
-
-  /** Ghi index + offset cùng lúc trên DOM — tránh 1 frame bài cũ nhảy về (offset=0 trước khi Svelte cập nhật %). */
-  function applyDeckPosition(index: number, offset: number) {
-    currentOffsetPx = offset;
-    queuedOffset = offset;
-    if (!deckElement) return;
-
-    deckElement.style.setProperty("--deck-index", String(index));
-    deckElement.style.setProperty("--drag-offset", `${offset}px`);
-    writeLeaveOpacity(offset);
-
-    if (collectionMode) {
-      const height = Math.max(deckHeight, 1);
-      collectionProgress =
-        dragging || animating ? index - offset / height : index;
+      collectionProgress = currentIndex - value / Math.max(deckHeight, 1);
     }
   }
 
   function syncDeckIndex(index: number) {
     if (!deckElement) return;
     deckElement.style.setProperty("--deck-index", String(index));
+  }
+
+  /** Index + offset cùng nhịp DOM — tránh 1 frame bài cũ nhảy về mép trên. */
+  function applyDeckPosition(index: number, offset: number) {
+    queuedOffset = offset;
+    syncDeckIndex(index);
+    setOffset(offset);
+    if (collectionMode && !dragging && !animating) {
+      collectionProgress = index;
+    }
   }
 
   // Đồng bộ --deck-index khi currentIndex đổi ngoài applyDeckPosition.
@@ -1430,9 +1399,6 @@
       setOffset(0);
     }
     cancelProgressAnim();
-    if (collectionMode && nextIndex === null) {
-      collectionProgress = currentIndex;
-    }
 
     await tick();
     void deckElement?.offsetHeight;
@@ -2295,8 +2261,6 @@
         dragAxis = "x";
         queuedOffset = 0;
         setOffset(0);
-        // Ưu tiên tải body ngay khi bắt đầu vuốt ngang mở bài.
-        prefetchArticle(contents[currentIndex]?.id);
       } else if (ady >= adx) {
         dragAxis = "y";
         queuedDragX = 0;
@@ -2685,7 +2649,6 @@
 
       <div
         class="slide"
-        use:placeSlide
         class:inactive={!isActive}
         aria-hidden={!isActive}
         inert={!isActive}
