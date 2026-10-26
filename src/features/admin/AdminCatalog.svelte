@@ -342,57 +342,77 @@
     }}
   >
     <header class="create-head">
-      <h2 id="create-catalog-title">Thêm mục</h2>
-      <button type="button" class="quiet" disabled={creating} onclick={closeCreate}>
+      <div class="create-head-copy">
+        <h2 id="create-catalog-title">Thêm mục</h2>
+        <p class="create-head-sub">Chủ đề hoặc tâm trạng mới cho danh mục.</p>
+      </div>
+      <button
+        type="button"
+        class="text-button create-close"
+        disabled={creating}
+        onclick={closeCreate}
+      >
         Đóng
       </button>
     </header>
 
-    <label class="field">
-      <span>Tên</span>
-      <input
-        maxlength="48"
-        placeholder="Ví dụ: Bình yên buổi sáng"
-        bind:value={createLabel}
-        disabled={creating}
-        required
-      />
-    </label>
-    {#if createSlugPreview}
-      <p class="slug-hint">Mã: <code>{createSlugPreview}</code></p>
-    {/if}
+    <div class="create-body">
+      <label class="field">
+        <span>Tên hiển thị</span>
+        <input
+          maxlength="48"
+          placeholder="Ví dụ: Bình yên buổi sáng"
+          bind:value={createLabel}
+          disabled={creating}
+          required
+          autocomplete="off"
+        />
+      </label>
+      {#if createSlugPreview}
+        <p class="slug-hint">Mã sẽ dùng: <code>{createSlugPreview}</code></p>
+      {:else}
+        <p class="slug-hint is-muted">Mã tạo tự động từ tên.</p>
+      {/if}
 
-    <p class="field-label" id="create-kind-label">Loại</p>
-    <div class="kind-chips" role="group" aria-labelledby="create-kind-label">
-      <button
-        type="button"
-        class="chip"
-        aria-pressed={createKind === "topic"}
-        disabled={creating}
-        onclick={() => (createKind = "topic")}
-      >
-        Chủ đề
-      </button>
-      <button
-        type="button"
-        class="chip"
-        aria-pressed={createKind === "mood"}
-        disabled={creating}
-        onclick={() => (createKind = "mood")}
-      >
-        Tâm trạng
-      </button>
+      <div class="kind-block">
+        <p class="field-label" id="create-kind-label">Loại</p>
+        <div class="kind-chips" role="group" aria-labelledby="create-kind-label">
+          <button
+            type="button"
+            class="chip"
+            aria-pressed={createKind === "topic"}
+            disabled={creating}
+            onclick={() => (createKind = "topic")}
+          >
+            Chủ đề
+          </button>
+          <button
+            type="button"
+            class="chip"
+            aria-pressed={createKind === "mood"}
+            disabled={creating}
+            onclick={() => (createKind = "mood")}
+          >
+            Tâm trạng
+          </button>
+        </div>
+      </div>
+
+      {#if createError}
+        <p class="create-error" role="alert">{createError}</p>
+      {/if}
     </div>
 
-    {#if createError}
-      <p class="create-error" role="alert">{createError}</p>
-    {/if}
-
-    <footer class="create-actions">
-      <button type="button" class="quiet" disabled={creating} onclick={closeCreate}>
+    <footer class="create-foot">
+      <button
+        type="button"
+        class="quiet foot-cancel"
+        disabled={creating}
+        onclick={closeCreate}
+      >
         Hủy
       </button>
-      <button type="submit" class="primary" disabled={creating}>
+      <button type="submit" class="primary foot-save" disabled={creating}>
         {creating ? "Đang lưu…" : "Lưu"}
       </button>
     </footer>
@@ -595,12 +615,16 @@
   }
 
   .create-dialog {
-    width: min(420px, calc(100vw - 1.5rem));
+    --create-inset: 1.5rem;
+    margin: auto;
+    width: min(440px, calc(100vw - var(--create-inset)));
+    max-height: calc(100dvh - var(--create-inset));
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-background);
     color: var(--color-text);
+    overflow: hidden;
   }
 
   .create-dialog::backdrop {
@@ -613,55 +637,136 @@
   }
 
   .create-sheet {
-    display: grid;
-    gap: var(--space-3);
-    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    width: 100%;
+    max-height: calc(100dvh - var(--create-inset));
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .create-head,
-  .create-actions {
+  .create-head {
     display: flex;
-    align-items: center;
+    flex: 0 0 auto;
+    align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-3);
+    padding: var(--space-5) var(--space-5) var(--space-4);
   }
 
-  .create-actions {
-    justify-content: flex-end;
-    margin-top: var(--space-2);
+  .create-head-copy {
+    min-width: 0;
+  }
+
+  .create-head h2 {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 560;
+    letter-spacing: -0.02em;
+  }
+
+  .create-head-sub {
+    margin: var(--space-1) 0 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.4;
+  }
+
+  .text-button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .create-close {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.35rem 0.5rem;
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .create-close:disabled {
+    opacity: 0.65;
+    cursor: progress;
+  }
+
+  .create-body {
+    flex: 1 1 auto;
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+    min-height: 0;
+    padding: 0 var(--space-5) var(--space-4);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .create-body .field span {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .create-body input {
+    min-height: 2.75rem;
+    box-sizing: border-box;
+    background: var(--color-surface);
   }
 
   .slug-hint {
-    margin: -0.35rem 0 0;
+    margin: -0.15rem 0 0;
     color: var(--color-text-secondary);
     font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .slug-hint.is-muted {
+    opacity: 0.85;
   }
 
   .slug-hint code {
     font-family: var(--font-body);
     font-weight: 650;
+    color: var(--color-text);
+  }
+
+  .kind-block {
+    display: grid;
+    gap: var(--space-2);
   }
 
   .field-label {
     margin: 0;
+    color: var(--color-text-secondary);
     font-size: var(--text-sm);
+    font-weight: 600;
   }
 
   .kind-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
   }
 
   .chip {
-    min-height: 36px;
-    padding: 0 0.9rem;
+    display: grid;
+    place-items: center;
+    min-height: 2.75rem;
+    padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    background: transparent;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
     color: var(--color-text-secondary);
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 0.92rem;
+    font-weight: 600;
     cursor: pointer;
   }
 
@@ -669,13 +774,44 @@
     border-color: transparent;
     background: var(--color-theme-peace);
     color: var(--color-accent-peace);
-    font-weight: 650;
+  }
+
+  .chip:disabled {
+    opacity: 0.65;
+    cursor: progress;
   }
 
   .create-error {
     margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
     color: var(--color-error);
     font-size: var(--text-sm);
+  }
+
+  .create-foot {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2);
+    align-items: center;
+    margin: 0;
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in oklab, var(--color-surface) 94%, transparent);
+  }
+
+  .create-foot .foot-cancel {
+    min-height: 2.75rem;
+    padding: 0 var(--space-3);
+    font-weight: 600;
+  }
+
+  .create-foot .foot-save {
+    width: 100%;
+    min-height: 2.75rem;
+    justify-self: stretch;
   }
 
   .panel {
@@ -1015,39 +1151,56 @@
     }
 
     .create-dialog {
+      --create-inset: 0px;
       width: 100vw;
       max-width: 100vw;
-      height: auto;
+      height: 100dvh;
       max-height: 100dvh;
       margin: 0;
       border: 0;
       border-radius: 0;
-      overflow: auto;
+      overflow: hidden;
     }
 
     .create-sheet {
-      min-height: 100dvh;
+      height: 100%;
+      max-height: 100%;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .create-head {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .create-head h2 {
+      font-size: 1.1rem;
+    }
+
+    .create-body {
       padding: var(--space-4);
-      padding-top: max(var(--space-4), env(safe-area-inset-top));
-      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
-      box-sizing: border-box;
     }
 
-    .create-actions {
-      position: sticky;
-      bottom: 0;
-      margin-top: auto;
-      padding-top: var(--space-3);
-      background: linear-gradient(
-        to top,
-        var(--color-background) 70%,
-        transparent
-      );
+    .create-foot {
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-2);
+      padding: var(--space-3) var(--space-4);
+      padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+      background: color-mix(in oklab, var(--color-surface) 92%, transparent);
     }
 
-    .create-actions .primary,
-    .create-actions .quiet {
-      min-height: 2.75rem;
+    .create-foot .foot-cancel,
+    .create-foot .foot-save {
+      width: 100%;
+      min-height: 3rem;
+    }
+
+    .create-foot .foot-cancel {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-full);
+      background: var(--color-surface);
+      color: var(--color-text);
     }
   }
 </style>

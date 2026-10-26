@@ -7,7 +7,8 @@ import {
   createAdminContent,
   listAdminContents,
   loadAdminCatalog,
-  respondAdminError
+  respondAdminError,
+  searchAdminContentsLite
 } from "../../../features/admin/d1-admin-content";
 import { requireAdmin } from "../../../features/admin/require-admin";
 
@@ -22,6 +23,21 @@ export const GET: APIRoute = async ({ request }) => {
   if (denied) return denied;
 
   const url = new URL(request.url);
+
+  // Picker modal: 1 query nhẹ, bỏ count/stats/catalog.
+  if (url.searchParams.get("lite") === "1") {
+    const q = url.searchParams.get("q") ?? "";
+    const rawLimit = Number(url.searchParams.get("limit") ?? "8");
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 8;
+
+    try {
+      const items = await searchAdminContentsLite(env.DB, q, limit);
+      return adminJson({ success: true, items }, 200);
+    } catch (error) {
+      return respondAdminError(error);
+    }
+  }
+
   const query = parseAdminListQuery({
     status: url.searchParams.get("status"),
     q: url.searchParams.get("q"),

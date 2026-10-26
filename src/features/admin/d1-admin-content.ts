@@ -440,6 +440,57 @@ export async function loadAdminCatalog(
   };
 }
 
+/** Tra cứu siêu nhẹ: chỉ id + title + description (preview thêm vào bộ). */
+export async function peekAdminContent(
+  db: D1Database,
+  id: string
+): Promise<{ id: string; title: string; description: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, title, description
+       FROM contents
+       WHERE id = ?1
+       LIMIT 1`
+    )
+    .bind(id)
+    .first<{ id: string; title: string; description: string }>();
+
+  return row ?? null;
+}
+
+/** Tìm theo tiêu đề cho picker: 1 query, chỉ id+title, không count/stats/topics. */
+export async function searchAdminContentsLite(
+  db: D1Database,
+  q: string,
+  limit: number
+): Promise<Array<{ id: string; title: string }>> {
+  const query = q.trim();
+  if (query.length < 2) return [];
+
+  const capped = Math.min(Math.max(limit, 1), 12);
+  const contains = likeContains(query);
+  const prefix = contains.slice(1); // bỏ % đầu → khớp đầu tiêu đề
+  const rows = await db
+    .prepare(
+      `SELECT c.id, c.title
+       FROM contents c
+       WHERE c.title LIKE ?1 ESCAPE '\\'
+       ORDER BY
+         CASE
+           WHEN c.title = ?2 THEN 0
+           WHEN c.title LIKE ?3 ESCAPE '\\' THEN 1
+           ELSE 2
+         END,
+         c.updated_at DESC,
+         c.id DESC
+       LIMIT ?4`
+    )
+    .bind(contains, query, prefix, capped)
+    .all<{ id: string; title: string }>();
+
+  return rows.results ?? [];
+}
+
 export async function getAdminContent(
   db: D1Database,
   id: string

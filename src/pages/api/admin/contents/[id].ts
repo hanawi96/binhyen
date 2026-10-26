@@ -10,6 +10,7 @@ import { parseContentDraft } from "../../../../features/admin/content-draft";
 import {
   deleteAdminContent,
   getAdminContent,
+  peekAdminContent,
   respondAdminError,
   updateAdminContent
 } from "../../../../features/admin/d1-admin-content";
@@ -46,6 +47,20 @@ export const GET: APIRoute = async ({ request, params }) => {
   if (id instanceof Response) return id;
 
   try {
+    const peek =
+      new URL(request.url).searchParams.get("peek") === "1";
+
+    if (peek) {
+      const content = await peekAdminContent(env.DB, id);
+      if (!content) {
+        return adminJson(
+          { success: false, error: "Không tìm thấy bài." },
+          404
+        );
+      }
+      return adminJson({ success: true, content }, 200);
+    }
+
     const content = await getAdminContent(env.DB, id);
 
     if (!content) {

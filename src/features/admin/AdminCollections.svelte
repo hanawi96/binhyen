@@ -15,9 +15,6 @@
   interface SearchHit {
     id: string;
     title: string;
-    status: string;
-    kind: string;
-    format?: string;
     description?: string;
   }
 
@@ -70,6 +67,8 @@
   let manualPreviewError = $state("");
   let manualLookupSerial = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchSerial = 0;
+  let searchAbort: AbortController | null = null;
   let manualTimer: ReturnType<typeof setTimeout> | undefined;
   let addDialog = $state<HTMLDialogElement | null>(null);
 
@@ -480,6 +479,11 @@
   }
 
   async function openAddModal(item: CollectionSummary) {
+    clearTimeout(searchTimer);
+    searchAbort?.abort();
+    searchAbort = null;
+    searchSerial += 1;
+    addSearching = false;
     addTarget = item;
     addDetail = null;
     addQuery = "";
@@ -502,11 +506,17 @@
   }
 
   function closeAddModal() {
+    clearTimeout(searchTimer);
+    searchAbort?.abort();
+    searchAbort = null;
+    searchSerial += 1;
+    addSearching = false;
     addDialog?.close();
     addOpen = false;
     addTarget = null;
     addDetail = null;
     addHits = [];
+    addQuery = "";
     addManualId = "";
     clearManualPreview();
     addNotice = "";
@@ -514,8 +524,18 @@
 
   function scheduleSearch() {
     clearTimeout(searchTimer);
+    const query = addQuery.trim();
+    if (query.length < 2) {
+      searchAbort?.abort();
+      searchAbort = null;
+      searchSerial += 1;
+      addHits = [];
+      addSearching = false;
+      return;
+    }
+
     searchTimer = setTimeout(() => {
-      void runSearch(addQuery);
+      void runSearch(query);
     }, 220);
   }
 
@@ -557,7 +577,7 @@
 
     try {
       const response = await fetch(
-        `/api/admin/contents/${encodeURIComponent(id)}`
+        `/api/admin/contents/${encodeURIComponent(id)}?peek=1`
       );
       const body = await response.json().catch(() => null);
       if (serial !== manualLookupSerial) return;
@@ -581,9 +601,6 @@
       manualPreview = {
         id: row.id,
         title: row.title,
-        status: typeof row.status === "string" ? row.status : "",
-        kind: typeof row.kind === "string" ? row.kind : "",
-        format: typeof row.format === "string" ? row.format : "",
         description:
           typeof row.description === "string" ? row.description : ""
       };
@@ -599,21 +616,29 @@
 
   async function runSearch(q: string) {
     const query = q.trim();
-    if (query.length < 1) {
+    if (query.length < 2) {
       addHits = [];
+      addSearching = false;
       return;
     }
 
+    searchAbort?.abort();
+    const controller = new AbortController();
+    searchAbort = controller;
+    const serial = ++searchSerial;
     addSearching = true;
+
     try {
       const params = new URLSearchParams({
+        lite: "1",
         q: query,
-        status: "all",
-        catalog: "0",
-        limit: "12"
+        limit: "8"
       });
-      const response = await fetch(`/api/admin/contents?${params}`);
+      const response = await fetch(`/api/admin/contents?${params}`, {
+        signal: controller.signal
+      });
       const body = await response.json();
+      if (serial !== searchSerial) return;
       if (!response.ok || !body?.success || !Array.isArray(body.items)) {
         addHits = [];
         return;
@@ -625,14 +650,14 @@
         )
         .map((row: Record<string, unknown>) => ({
           id: row.id as string,
-          title: row.title as string,
-          status: typeof row.status === "string" ? row.status : "",
-          kind: typeof row.kind === "string" ? row.kind : ""
+          title: row.title as string
         }));
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (serial !== searchSerial) return;
       addHits = [];
     } finally {
-      addSearching = false;
+      if (serial === searchSerial) addSearching = false;
     }
   }
 
@@ -1256,7 +1281,7 @@
 
         {#if addSearching}
           <p class="add-status">Đang tìm…</p>
-        {:else if addQuery.trim() && addHits.length === 0}
+        {:else if addQuery.trim().length >= 2 && addHits.length === 0}
           <p class="add-status">Không thấy bài phù hợp.</p>
         {:else if addHits.length > 0}
           <ul class="hit-list">
@@ -1265,10 +1290,9 @@
               <li>
                 <div class="hit-main">
                   <strong>{hit.title}</strong>
-                  <span>
-                    <code>{hit.id}</code>
-                    · {hit.status}
-                  </span>
+                  {#if already}
+                    <span>Đã có trong bộ</span>
+                  {/if}
                 </div>
                 <button
                   type="button"
@@ -1326,12 +1350,9 @@
                   {manualPreview.description.trim()}
                 </p>
               {/if}
-              <span>
-                <code>{manualPreview.id}</code>
-                {#if already}
-                  · Đã có trong bộ
-                {/if}
-              </span>
+              {#if already}
+                <span>Đã có trong bộ</span>
+              {/if}
             </div>
           </div>
         {/if}
@@ -2633,10 +2654,10 @@
     flex: 0 0 auto;
     min-height: 2rem;
     padding: 0 0.85rem;
-    border: 1px solid var(--color-border);
+    border: 0;
     border-radius: var(--radius-full);
-    background: var(--color-surface);
-    color: var(--color-text);
+    background: var(--color-primary);
+    color: var(--color-surface);
     font: inherit;
     font-size: 0.82rem;
     font-weight: 650;
@@ -2644,8 +2665,7 @@
   }
 
   .hit-add:not(.is-done):hover:not(:disabled) {
-    border-color: var(--color-primary);
-    color: var(--color-primary);
+    background: var(--color-primary-hover);
   }
 
   .hit-add.is-done,
