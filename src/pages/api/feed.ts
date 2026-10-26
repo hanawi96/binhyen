@@ -9,10 +9,9 @@ import {
   readFeedViewer,
   resetViewerLoop
 } from "../../features/feed/d1-viewer-state";
-import { attachViewerReactions } from "../../features/feed/feed-rows";
-import { loadLovedFeed } from "../../features/feed/load-loved-feed";
+import { loadPeopleFeed } from "../../features/feed/load-people-feed";
 import { loadPublicFeed } from "../../features/feed/load-public-feed";
-import { decodeLovedCursor } from "../../features/feed/loved-cursor";
+import { decodePeopleCursor } from "../../features/feed/people-cursor";
 import {
   decodeRingCursor,
   type RingCursor
@@ -75,7 +74,7 @@ export const GET: APIRoute = async ({ request }) => {
 
   const section = url.searchParams.get("section");
 
-  if (section !== null && section !== "loved") {
+  if (section !== null && section !== "people") {
     return Response.json(
       {
         success: false,
@@ -85,8 +84,8 @@ export const GET: APIRoute = async ({ request }) => {
     );
   }
 
-  if (section === "loved") {
-    if (rawCursor !== null && !decodeLovedCursor(rawCursor)) {
+  if (section === "people") {
+    if (rawCursor !== null && !decodePeopleCursor(rawCursor)) {
       return Response.json(
         {
           success: false,
@@ -103,18 +102,23 @@ export const GET: APIRoute = async ({ request }) => {
         request.headers.get("cookie"),
         now
       );
-      const page = await loadLovedFeed(env.DB, {
+      const page = await loadPeopleFeed(env.DB, {
         cursor: rawCursor,
-        limit
+        limit,
+        viewer,
+        onAllSeen: () => resetViewerLoop(env.DB, viewer, now)
       });
-      const items = await attachViewerReactions(
-        env.DB,
-        page.items,
-        viewer.actorId
-      );
 
       return Response.json(
-        { success: true, ...page, items },
+        {
+          success: true,
+          items: page.items,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          matched: page.matched,
+          notice: page.notice,
+          pageCursor: page.pageCursor
+        },
         {
           headers: {
             "Cache-Control": "no-store",
@@ -123,7 +127,7 @@ export const GET: APIRoute = async ({ request }) => {
         }
       );
     } catch (error) {
-      console.error("Loved feed API error:", error);
+      console.error("People feed API error:", error);
 
       return Response.json(
         {

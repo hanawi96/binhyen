@@ -42,8 +42,11 @@
   );
   const showPrompt = $derived(content.format === "prompt");
   const showQuote = $derived(content.format === "quote");
-  const quoteAuthor = $derived(
-    showQuote && content.source?.label ? content.source.label : ""
+  /** Quote dùng source; bài user dùng authorName — cùng dòng — như châm ngôn. */
+  const byline = $derived(
+    showQuote
+      ? content.source?.label?.trim() || ""
+      : content.authorName?.trim() || ""
   );
   const mediaMode = $derived(showImage || showVideo || showPoll);
 
@@ -178,8 +181,8 @@
     {content.title}
   </h2>
 
-  {#if quoteAuthor}
-    <p class="quote-author">— {quoteAuthor}</p>
+  {#if byline}
+    <p class="quote-author">— {byline}</p>
   {/if}
 
   {#if content.hasArticle}

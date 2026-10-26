@@ -184,6 +184,8 @@ export interface ContentItem {
 
   article?: ContentArticle;
   source?: ContentSource;
+  /** Tên hiển thị của người viết (bài có author_id); dùng dòng — như châm ngôn. */
+  authorName?: string;
   /** Co khi format = image va da gan media. */
   image?: ContentImage;
   /** Co khi format = video va da gan media. */

@@ -28,6 +28,11 @@ export const CARD_COLUMNS = `
   c.rank_key,
   c.seq,
   (
+    SELECT u.display_name
+    FROM users u
+    WHERE u.id = c.author_id
+  ) AS author_name,
+  (
     SELECT json_group_array(ct.topic_slug)
     FROM content_topics ct
     WHERE ct.content_id = c.id
@@ -100,6 +105,7 @@ export interface ContentRow {
   published_at: number;
   rank_key: number;
   seq: number;
+  author_name: string | null;
   topics_json: string;
   moods_json: string;
   has_article: number | null;
@@ -170,6 +176,8 @@ export function mapRow(row: ContentRow): RankedContent {
     typeof row.source_label === "string" ? row.source_label.trim() : "";
   const sourceUrl =
     typeof row.source_url === "string" ? row.source_url.trim() : "";
+  const authorName =
+    typeof row.author_name === "string" ? row.author_name.trim() : "";
 
   return {
     id: row.id,
@@ -191,6 +199,7 @@ export function mapRow(row: ContentRow): RankedContent {
     ...(sourceLabel
       ? { source: { label: sourceLabel, url: sourceUrl } }
       : {}),
+    ...(authorName ? { authorName } : {}),
     ...(image ? { image } : {}),
     ...(video ? { video } : {}),
     ...(pollOptions ? { pollOptions } : {}),
@@ -221,6 +230,7 @@ export function toContentItem(row: RankedContent): ContentItem {
     ...(typeof row.liked === "boolean" ? { liked: row.liked } : {}),
     ...(typeof row.saved === "boolean" ? { saved: row.saved } : {}),
     ...(row.source ? { source: row.source } : {}),
+    ...(row.authorName ? { authorName: row.authorName } : {}),
     ...(row.image ? { image: row.image } : {}),
     ...(row.video ? { video: row.video } : {}),
     ...(row.pollOptions ? { pollOptions: row.pollOptions } : {})

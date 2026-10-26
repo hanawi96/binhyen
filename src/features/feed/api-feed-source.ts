@@ -223,7 +223,7 @@ function isContent(value: unknown): value is ContentItem {
 }
 
 interface ApiFeedOptions {
-  section?: "loved";
+  section?: "people";
   origin?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;

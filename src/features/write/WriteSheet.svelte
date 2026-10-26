@@ -1,11 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import {
-    loadDraft,
-    submitPost,
-    updatePost,
-    type MinePost
-  } from "../mine/mine-client";
+  import { loadDraft, submitPost, updatePost } from "../mine/mine-client";
 
   const MAX_TOPICS = 3;
   const TITLE_MAX = 280;
@@ -30,7 +25,8 @@
     edit: { id: string; serial: number } | null;
     onClose: () => void;
     onSignIn: () => void;
-    onSaved: () => void;
+    /** kind: gui moi / luu sua — parent dong sheet + toast. */
+    onSaved: (kind: "sent" | "edited") => void;
     onOpenPosts: () => void;
   } = $props();
 
@@ -87,10 +83,8 @@
   let chosen = $state<string[]>([]);
   let busy = $state(false);
   let error = $state("");
-  let sent = $state<MinePost | null>(null);
   let editState = $state<"loading" | "ready" | "error">("ready");
   let editError = $state("");
-  let edited = $state("");
   let owner: string | null = null;
   let editKey = "";
 
@@ -101,8 +95,6 @@
     body = "";
     chosen = [];
     error = "";
-    sent = null;
-    edited = "";
     editState = "ready";
     editError = "";
   }
@@ -182,10 +174,9 @@
         return;
       }
 
-      const savedTitle = title.trim();
       reset();
-      edited = savedTitle;
-      onSaved();
+      onSaved("edited");
+      onClose();
       return;
     }
 
@@ -198,8 +189,8 @@
     }
 
     reset();
-    sent = result.post;
-    onSaved();
+    onSaved("sent");
+    onClose();
   }
 </script>
 
@@ -272,27 +263,6 @@
         <p>{editError}</p>
         <button type="button" class="write-submit" onclick={onOpenPosts}>
           Về «Đã viết»
-        </button>
-      </div>
-    {:else if edited}
-      <div class="write-note" aria-live="polite">
-        <p class="write-done">Đã lưu thay đổi «{edited}».</p>
-        <p class="write-soft">Bài vẫn đang chờ duyệt.</p>
-        <button type="button" class="write-submit" onclick={onOpenPosts}>
-          Xem trong «Đã viết»
-        </button>
-      </div>
-    {:else if sent}
-      <div class="write-note" aria-live="polite">
-        <p class="write-done">Đã gửi «{sent.title}».</p>
-        <p class="write-soft">
-          Bài đang ở dạng bản nháp và sẽ hiện trên Bình Yên sau khi được duyệt.
-        </p>
-        <button type="button" class="write-submit" onclick={onOpenPosts}>
-          Xem trong «Đã viết»
-        </button>
-        <button type="button" class="write-text" onclick={() => (sent = null)}>
-          Viết bài khác
         </button>
       </div>
     {:else}
@@ -645,20 +615,6 @@
     cursor: default;
   }
 
-  .write-text {
-    display: block;
-    margin: 6px auto 0;
-    padding: 10px 14px;
-    border: 0;
-    background: transparent;
-    color: var(--color-text-secondary);
-    font: inherit;
-    font-size: 14px;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    cursor: pointer;
-  }
-
   .write-note {
     padding: 56px 12px;
     color: color-mix(in oklab, var(--color-text) 78%, transparent);
@@ -672,22 +628,11 @@
     margin: 0 0 14px;
   }
 
-  .write-done {
-    color: var(--color-text);
-    font-family: var(--font-editorial);
-    font-size: clamp(1.35rem, 4vw, 1.7rem);
-    line-height: 1.35;
-  }
-
   .write-soft {
     color: var(--color-text-muted);
     font-family: var(--font-body);
     font-size: 12px;
     line-height: 1.5;
-  }
-
-  .write-note .write-soft {
-    margin-bottom: 22px;
   }
 
   .write-center {

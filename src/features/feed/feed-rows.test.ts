@@ -19,6 +19,7 @@ function baseRow(overrides: Partial<ContentRow> = {}): ContentRow {
     published_at: 100,
     rank_key: 1,
     seq: 1,
+    author_name: null,
     topics_json: '["peace"]',
     moods_json: '["calm"]',
     has_article: 0,
@@ -143,6 +144,26 @@ describe("mapRow media + poll", () => {
       url: "https://example.com/nguyen-du"
     });
     expect(toContentItem(row).source?.label).toBe("Nguyễn Du");
+  });
+
+  it("gắn authorName từ author_name, không đụng source", () => {
+    const row = mapRow(
+      baseRow({
+        format: "text",
+        kind: "story",
+        author_name: "  Lan Anh  "
+      })
+    );
+
+    expect(row.authorName).toBe("Lan Anh");
+    expect(row.source).toBeUndefined();
+    expect(toContentItem(row).authorName).toBe("Lan Anh");
+  });
+
+  it("bỏ authorName khi author_name rỗng", () => {
+    const row = mapRow(baseRow({ author_name: "   " }));
+    expect(row.authorName).toBeUndefined();
+    expect(toContentItem(row).authorName).toBeUndefined();
   });
 
   it("không gắn media khi format text dù có media_json", () => {

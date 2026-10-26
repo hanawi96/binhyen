@@ -56,7 +56,7 @@
     initialCursor = null,
     initialPageCursor = null,
     initialMatched = true,
-    initialNotice = null,
+    initialNotice: _initialNotice = null,
     initialUser,
     initialPostNews = 0,
     initialTopics = [],
@@ -66,6 +66,7 @@
     initialCursor?: string | null;
     initialPageCursor?: string | null;
     initialMatched?: boolean;
+    /** Giữ prop từ SSR; thong bao all-seen khong hien UI. */
     initialNotice?: "all-seen" | null;
     initialUser?: AccountUser | null;
     initialPostNews?: number;
@@ -88,12 +89,12 @@
 
   let selectedTopic = $state<TopicFilter>("all");
   let selectedMood = $state<MoodFilter>("all");
-  type SectionKey = "for-you" | "loved" | string;
+  type SectionKey = "for-you" | "people" | string;
 
   const sections = $derived.by(() => {
     const rows: Array<{ key: SectionKey; label: string }> = [
       { key: "for-you", label: "Dành cho bạn" },
-      { key: "loved", label: "Yêu thích nhất" }
+      { key: "people", label: "Người khác" }
     ];
     for (const topic of initialTopics) {
       if (!topic.slug || topic.slug === "all") continue;
@@ -103,18 +104,17 @@
   });
 
   let selectedSection = $state<SectionKey>("for-you");
-  let lovedMode = $state(false);
+  let peopleMode = $state(false);
   let sectionBar = $state<HTMLElement | null>(null);
 
   // STEP12_FEED_BUFFER
   const PAGE_SIZE = 3;
-  const PREFETCH_REMAINING = 1;
-  const NEXT_PAGE_STATUS = "Đang chuẩn bị nội dung tiếp theo...";
-  const ALL_SEEN_NOTE =
-    "Bạn đã xem hết một vòng. Đang mở lại những bài cũ hơn.";
-  const END_NOTE = "Bạn đã xem hết những điều đang có.";
+  /** Prefetch khi con 2 the — kip san truoc khi user doc xong / vuot nhanh. */
+  const PREFETCH_REMAINING = 2;
+  /** Nguoi khac: prefetch som hon (con 2 the) de vuot next khong cho. */
+  const PEOPLE_PREFETCH_REMAINING = 2;
+  const PEOPLE_PREFETCH_PAGE = 10;
   const COLLECTION_END_NOTE = "Bạn đã xem hết bộ này.";
-  const RESTART_LABEL = "Xem lại từ đầu";
   const RETRY_LABEL = "Thử lại";
   const LOAD_ERROR_MESSAGES = [
     "Hết thời gian chờ. Hãy thử lại.",
@@ -143,7 +143,6 @@
   let loading = $state(false);
   let loadError = $state("");
   let directMatch = $state(initialMatched);
-  let feedNotice = $state<"all-seen" | null>(initialNotice);
   let loadSerial = 0;
   let loadController: AbortController | null = null;
   // Trang loc moi thay ca bo the, khong noi vao the cu.
@@ -342,7 +341,7 @@
   // Bai mo tu "Cua toi" khong nam trong bo the.
   type ReadItem = Pick<
     ContentItem,
-    "id" | "title" | "category" | "description" | "theme"
+    "id" | "title" | "category" | "description" | "theme" | "authorName"
   >;
 
   let readItem = $state<ReadItem | null>(null);
@@ -807,12 +806,25 @@
   type WriteSheetComponent =
     typeof import("../write/WriteSheet.svelte").default;
 
+  type TopicsSheetComponent =
+    typeof import("../account/TopicsSheet.svelte").default;
+
   let MineSheet = $state<MineSheetComponent | null>(null);
   let AccountSheet = $state<AccountSheetComponent | null>(null);
   let WriteSheet = $state<WriteSheetComponent | null>(null);
+  let TopicsSheet = $state<TopicsSheetComponent | null>(null);
   let mineOpen = $state(false);
   let accountOpen = $state(false);
   let writeOpen = $state(false);
+  let topicsOpen = $state(false);
+  let toastText = $state("");
+  let toastTimer = 0;
+  /** Promise chung noi vong "Nguoi khac" — vuot bien await cung mot lan tai. */
+  let peopleAheadPromise: Promise<boolean> | null = null;
+  /** Promise chung prefetch Danh cho ban — vuot bien await cung mot lan loadMore. */
+  let forYouAheadPromise: Promise<boolean> | null = null;
+  /** Mot request loadMore dang bay — caller khac await cung promise. */
+  let loadMorePromise: Promise<void> | null = null;
   let mineTab = $state<"post" | "settings" | null>(null);
   let writeEdit = $state<{ id: string; serial: number } | null>(null);
   let editSerial = 0;
@@ -820,9 +832,10 @@
   let mineCode: Promise<void> | null = null;
   let accountCode: Promise<void> | null = null;
   let writeCode: Promise<void> | null = null;
+  let topicsCode: Promise<void> | null = null;
   const writeTopics = $derived(
     sections
-      .filter((section) => section.key !== "for-you" && section.key !== "loved")
+      .filter((section) => section.key !== "for-you" && section.key !== "people")
       .map((section) => ({ key: section.key, label: section.label }))
   );
   let user = $state<AccountUser | null>(initialUser ?? null);
@@ -830,7 +843,9 @@
   // So bai vua duoc duyet / tu choi ma nguoi viet chua mo "Da viet".
   let postNews = $state(initialPostNews);
   let meLoad: Promise<void> | null = null;
-  let sheetOpen = $derived(mineOpen || accountOpen || writeOpen);
+  let sheetOpen = $derived(
+    mineOpen || accountOpen || writeOpen || topicsOpen
+  );
   function ensureMe() {
     if (userKnown) return;
     meLoad ??= fetchMe()
@@ -881,12 +896,25 @@
       });
   }
 
+  function warmTopics() {
+    ensureMe();
+    if (!user) return;
+    topicsCode ??= import("../account/TopicsSheet.svelte")
+      .then((module) => {
+        TopicsSheet = module.default;
+      })
+      .catch(() => {
+        topicsCode = null;
+      });
+  }
+
   // Moi ngan chiem mot muc lich su de nut Back dong ngan.
-  function showSheet(which: "mine" | "account" | "write") {
+  function showSheet(which: "mine" | "account" | "write" | "topics") {
     const replace = sheetOpen;
     mineOpen = which === "mine";
     accountOpen = which === "account";
     writeOpen = which === "write";
+    topicsOpen = which === "topics";
 
     if (replace && history.state?.binhyenSheet) {
       history.replaceState({ binhyenSheet: true }, "");
@@ -941,6 +969,35 @@
     showWrite(null);
   }
 
+  function flashToast(text: string) {
+    window.clearTimeout(toastTimer);
+    toastText = text;
+    toastTimer = window.setTimeout(() => {
+      toastText = "";
+      toastTimer = 0;
+    }, 2600);
+  }
+
+  function onWriteSaved(kind: "sent" | "edited") {
+    postsVersion += 1;
+    flashToast(kind === "sent" ? "Gửi bài thành công" : "Đã lưu thay đổi");
+  }
+
+  /** Mo sheet chu de; khach chua dang nhap thi mo dang nhap. */
+  function openTopics() {
+    if (topicsOpen || reading) return;
+
+    ensureMe();
+    if (!user) {
+      warmAccount();
+      showSheet("account");
+      return;
+    }
+
+    warmTopics();
+    showSheet("topics");
+  }
+
   function editPost(item: MinePost) {
     editSerial += 1;
     void showWrite({ id: item.id, serial: editSerial });
@@ -955,6 +1012,7 @@
       mineOpen = false;
       accountOpen = false;
       writeOpen = false;
+      topicsOpen = false;
     }
   }
 
@@ -1161,15 +1219,13 @@
   let filtered = $derived(
     selectedTopic !== "all" || selectedMood !== "all"
   );
-  let atEnd = $derived(
-    contents.length > 0 &&
+  let atCollectionEnd = $derived(
+    collectionMode &&
+      contents.length > 0 &&
       currentIndex >= contents.length - 1 &&
       !hasMore &&
       !loading &&
       !loadError
-  );
-  let showingAllSeen = $derived(
-    feedNotice === "all-seen" && contents.length > 0 && !loadError
   );
   let showWaiting = $state(false);
   let emptyCopy = $derived(
@@ -1189,10 +1245,10 @@
               window.location.href = "/collections";
             }
           }
-        : lovedMode
+        : peopleMode
           ? {
-              title: "Chưa có bài nào được yêu thích",
-              text: "Chạm ♡ ở một bài để bài ấy xuất hiện ở đây.",
+              title: "Chưa có bài từ mọi người",
+              text: "Hãy viết một điều và gửi duyệt — bài sẽ hiện ở đây sau khi được đăng.",
               label: "Xem Dành cho bạn",
               action: showAll
             }
@@ -1267,7 +1323,7 @@
 
       seenReporter.mark(
         id,
-        lovedMode ? null : (pageCursors.get(id) ?? null)
+        peopleMode ? null : (pageCursors.get(id) ?? null)
       );
     }, 900);
 
@@ -1484,12 +1540,13 @@
     animating = false;
     completingTransition = false;
 
-    if (
-      nextIndex !== null &&
-      hasMore &&
-      contents.length - currentIndex - 1 <= PREFETCH_REMAINING
-    ) {
-      void loadMore();
+    if (nextIndex === null) return;
+
+    const ahead = contents.length - currentIndex - 1;
+    if (peopleMode && ahead <= PEOPLE_PREFETCH_REMAINING) {
+      void ensurePeopleAhead();
+    } else if (!peopleMode && ahead <= PREFETCH_REMAINING) {
+      void ensureForYouAhead();
     }
   }
 
@@ -1539,15 +1596,22 @@
     loadSerial += 1;
     loadController?.abort();
     loadController = null;
+    loadMorePromise = null;
+    forYouAheadPromise = null;
   }
 
   async function loadMore(expectedVersion = feedVersion) {
     if (
       expectedVersion !== feedVersion ||
-      loading ||
       !hasMore ||
       nextCursor === null
     ) {
+      return;
+    }
+
+    // Cung mot request dang bay: await chung, khong bo qua / khong goi kep.
+    if (loadMorePromise) {
+      await loadMorePromise;
       return;
     }
 
@@ -1562,88 +1626,130 @@
     const activeSource = source;
     let emptyContinues = 0;
 
-    try {
-      while (serial === loadSerial && expectedVersion === feedVersion) {
-        const activeCursor = nextCursor;
+    const run = (async () => {
+      try {
+        while (serial === loadSerial && expectedVersion === feedVersion) {
+          const activeCursor = nextCursor;
 
-        if (activeCursor === null) break;
+          if (activeCursor === null) break;
 
-        const page = await activeSource.loadPage(
-          activeCursor,
-          PAGE_SIZE,
-          controller.signal
-        );
+          const page = await activeSource.loadPage(
+            activeCursor,
+            PAGE_SIZE,
+            controller.signal
+          );
 
-        // Ket qua cua bo loc cu khong duoc chen vao feed moi.
-        if (serial !== loadSerial || expectedVersion !== feedVersion) {
+          // Ket qua cua bo loc cu khong duoc chen vao feed moi.
+          if (serial !== loadSerial || expectedVersion !== feedVersion) {
+            return;
+          }
+
+          rememberPageCursor(page.items, page.pageCursor ?? null);
+
+          const storage = browserStorage();
+          const recent = new Set(storage ? readRecentSeen(storage) : []);
+          let added = 0;
+
+          let loopedPeople = false;
+
+          if (replaceOnLoad) {
+            replaceOnLoad = false;
+            added = page.items.length;
+
+            if (topicFading) {
+              swapAfterFade(page.items);
+            } else {
+              contents = page.items;
+              currentIndex = 0;
+              applyDeckPosition(0, 0);
+            }
+          } else if (peopleMode && page.notice === "all-seen" && page.items.length > 0) {
+            // Noi vong: giu lich su + the hien tai, noi bai moi phia sau.
+            const head = contents.slice(0, currentIndex);
+            const cur = contents[currentIndex];
+            const tail = cur ? [cur] : [];
+            const tailIds = new Set(tail.map((item) => item.id));
+            const rest = page.items.filter((item) => !tailIds.has(item.id));
+            if (cur && rest.length > 0) {
+              contents = [...head, cur, ...rest];
+              currentIndex = head.length;
+              applyDeckPosition(currentIndex, 0);
+              added = rest.length;
+              source = createApiFeedSource("all", "all", { section: "people" });
+              nextCursor = "__first__";
+              hasMore = true;
+              loopedPeople = true;
+            } else {
+              added = 0;
+            }
+          } else {
+            const loadedIds = new Set(contents.map((item) => item.id));
+            const newItems = page.items.filter(
+              (item) => !loadedIds.has(item.id) && !recent.has(item.id)
+            );
+
+            added = newItems.length;
+            contents = [...contents, ...newItems];
+          }
+
+          if (activeCursor === "__first__") {
+            directMatch = page.matched !== false;
+          }
+
+          if (!loopedPeople) {
+            nextCursor = page.nextCursor;
+            hasMore = nextCursor !== null;
+          }
+
+          // Trang khong them the moi nhung van con cursor: tai tiep.
+          if (
+            added > 0 ||
+            nextCursor === null ||
+            emptyContinues >= MAX_EMPTY_CONTINUES
+          ) {
+            break;
+          }
+
+          emptyContinues += 1;
+        }
+
+        // Nguoi khac: prefetch som (deck ngan hoac sap het the).
+        if (
+          serial === loadSerial &&
+          expectedVersion === feedVersion &&
+          peopleMode &&
+          contents.length - currentIndex - 1 <= PEOPLE_PREFETCH_REMAINING
+        ) {
+          void ensurePeopleAhead();
+        }
+      } catch (error) {
+        if (
+          serial !== loadSerial ||
+          expectedVersion !== feedVersion ||
+          isFeedAbort(error)
+        ) {
           return;
         }
 
-        rememberPageCursor(page.items, page.pageCursor ?? null);
+        loadError = loadErrorMessage(error);
+        endTopicFade();
+      } finally {
+        if (serial === loadSerial && expectedVersion === feedVersion) {
+          loading = false;
 
-        if (page.notice === "all-seen") feedNotice = "all-seen";
-
-        const storage = browserStorage();
-        const recent = new Set(storage ? readRecentSeen(storage) : []);
-        let added = 0;
-
-        if (replaceOnLoad) {
-          replaceOnLoad = false;
-          added = page.items.length;
-
-          if (topicFading) {
-            swapAfterFade(page.items);
-          } else {
-            contents = page.items;
-            currentIndex = 0;
-            applyDeckPosition(0, 0);
+          if (loadController === controller) {
+            loadController = null;
           }
-        } else {
-          const loadedIds = new Set(contents.map((item) => item.id));
-          const newItems = page.items.filter(
-            (item) => !loadedIds.has(item.id) && !recent.has(item.id)
-          );
-
-          added = newItems.length;
-          contents = [...contents, ...newItems];
         }
-
-        if (activeCursor === "__first__") {
-          directMatch = page.matched !== false;
-        }
-
-        nextCursor = page.nextCursor;
-        hasMore = nextCursor !== null;
-
-        // Trang khong them the moi nhung van con cursor: tai tiep.
-        if (
-          added > 0 ||
-          nextCursor === null ||
-          emptyContinues >= MAX_EMPTY_CONTINUES
-        ) {
-          break;
-        }
-
-        emptyContinues += 1;
       }
-    } catch (error) {
-      if (
-        serial !== loadSerial ||
-        expectedVersion !== feedVersion ||
-        isFeedAbort(error)
-      ) {
-        return;
-      }
+    })();
 
-      loadError = loadErrorMessage(error);
-      endTopicFade();
+    loadMorePromise = run;
+    try {
+      await run;
     } finally {
-      if (serial === loadSerial && expectedVersion === feedVersion) {
-        loading = false;
-
-        if (loadController === controller) {
-          loadController = null;
-        }
+      if (loadMorePromise === run) {
+        loadMorePromise = null;
       }
     }
   }
@@ -1654,7 +1760,7 @@
   function applyFilters(
     topic: TopicFilter,
     mood: MoodFilter,
-    loved = false
+    people = false
   ) {
     if (dragging || animating) return;
 
@@ -1663,9 +1769,9 @@
     const newSource = createApiFeedSource(
       topic,
       mood,
-      loved ? { section: "loved" } : {}
+      people ? { section: "people" } : {}
     );
-    lovedMode = loved;
+    peopleMode = people;
 
     const firstPage = newSource.firstPage(PAGE_SIZE);
 
@@ -1684,7 +1790,6 @@
     loading = false;
     loadError = "";
     directMatch = true;
-    feedNotice = null;
     replaceOnLoad = true;
 
     setOffset(0);
@@ -1727,7 +1832,7 @@
     applyFilters(
       isTopicFilter(key) ? key : "all",
       "all",
-      key === "loved"
+      key === "people"
     );
   }
 
@@ -2010,11 +2115,11 @@
       readerDismissing = false;
       clearArticleBody();
 
-      if (
-        hasMore &&
-        contents.length - nextIndex - 1 <= PREFETCH_REMAINING
-      ) {
-        void loadMore();
+      const ahead = contents.length - nextIndex - 1;
+      if (peopleMode && ahead <= PEOPLE_PREFETCH_REMAINING) {
+        void ensurePeopleAhead();
+      } else if (!peopleMode && ahead <= PREFETCH_REMAINING) {
+        void ensureForYouAhead();
       }
     }, READ_MOTION_MS);
   }
@@ -2198,7 +2303,7 @@
       selectedSection !== "for-you" ||
       selectedTopic !== "all" ||
       selectedMood !== "all" ||
-      lovedMode
+      peopleMode
     ) {
       return;
     }
@@ -2213,12 +2318,152 @@
     seenIds.clear();
     seenCount = 0;
 
-    applyFilters(selectedTopic, selectedMood, lovedMode);
+    applyFilters(selectedTopic, selectedMood, peopleMode);
   }
+
+  /**
+   * Prefetch Danh cho ban (va collection / loc) im lang.
+   * Con the ke: kick loadMore neu can. O bien: await cung promise — auto-snap.
+   */
+  function ensureForYouAhead(): Promise<boolean> {
+    if (peopleMode || replaceOnLoad || reading) {
+      return Promise.resolve(currentIndex < contents.length - 1);
+    }
+
+    if (forYouAheadPromise) return forYouAheadPromise;
+
+    const ahead = contents.length - currentIndex - 1;
+    if (ahead > PREFETCH_REMAINING) {
+      return Promise.resolve(true);
+    }
+
+    if (ahead > 0) {
+      if (hasMore && nextCursor !== null) {
+        void loadMore();
+      }
+      return Promise.resolve(true);
+    }
+
+    // Bien cuoi: khong con cursor va khong dang tai → het that.
+    if ((!hasMore || nextCursor === null) && !loading && !loadMorePromise) {
+      return Promise.resolve(false);
+    }
+
+    const run = (async () => {
+      try {
+        await loadMore();
+        return currentIndex < contents.length - 1;
+      } catch {
+        return currentIndex < contents.length - 1;
+      } finally {
+        if (forYouAheadPromise === run) {
+          forYouAheadPromise = null;
+        }
+      }
+    })();
+
+    forYouAheadPromise = run;
+    return run;
+  }
+
+  /**
+   * Prefetch / noi vong "Nguoi khac" im lang.
+   * Cung mot promise: vuot bien luc dang tai se await — khong mat nhip.
+   * Giu lich su phia truoc; noi them phia sau (id co the lap — key index:id).
+   */
+  function ensurePeopleAhead(): Promise<boolean> {
+    if (!peopleMode || replaceOnLoad || reading) {
+      return Promise.resolve(currentIndex < contents.length - 1);
+    }
+
+    if (peopleAheadPromise) return peopleAheadPromise;
+
+    const ahead = contents.length - currentIndex - 1;
+    if (ahead > PEOPLE_PREFETCH_REMAINING) {
+      return Promise.resolve(true);
+    }
+
+    const stayId = contents[currentIndex]?.id;
+    if (!stayId) return Promise.resolve(false);
+
+    peopleAheadPromise = (async () => {
+      try {
+        await seenReporter.flush();
+
+        const loopSource = createApiFeedSource("all", "all", {
+          section: "people"
+        });
+        const page = await loopSource.loadPage(
+          "__first__",
+          PEOPLE_PREFETCH_PAGE
+        );
+
+        // Sau await: neo lai the dang xem (user co the da vuot trong luc tai).
+        let stayAt = currentIndex;
+        if (contents[stayAt]?.id !== stayId) {
+          const found = contents.findIndex((item) => item.id === stayId);
+          if (found < 0) return currentIndex < contents.length - 1;
+          stayAt = found;
+        }
+
+        const liveHead = contents.slice(0, stayAt);
+        const liveTail = contents.slice(stayAt);
+        const tailIds = new Set(liveTail.map((item) => item.id));
+        const rest = page.items.filter((item) => !tailIds.has(item.id));
+        if (rest.length === 0) return stayAt < contents.length - 1;
+
+        contents = [...liveHead, ...liveTail, ...rest];
+        currentIndex = liveHead.length;
+        applyDeckPosition(currentIndex, 0);
+        rememberPageCursor(page.items, page.pageCursor ?? null);
+
+        source = loopSource;
+        nextCursor = page.nextCursor;
+        hasMore = page.nextCursor !== null;
+        if (!hasMore && rest.length > 0) {
+          nextCursor = "__first__";
+          hasMore = true;
+          source = createApiFeedSource("all", "all", { section: "people" });
+        }
+
+        return currentIndex < contents.length - 1;
+      } catch {
+        return currentIndex < contents.length - 1;
+      } finally {
+        peopleAheadPromise = null;
+      }
+    })();
+
+    return peopleAheadPromise;
+  }
+
   function navigate(direction: 1 | -1) {
     if (dragging || animating || replaceOnLoad) return;
 
     const nextIndex = currentIndex + direction;
+
+    if (
+      direction === 1 &&
+      nextIndex >= contents.length &&
+      peopleMode
+    ) {
+      void ensurePeopleAhead().then((ok) => {
+        if (ok && currentIndex < contents.length - 1) navigate(1);
+      });
+      return;
+    }
+
+    if (
+      direction === 1 &&
+      nextIndex >= contents.length &&
+      !peopleMode &&
+      (hasMore || loading || loadMorePromise)
+    ) {
+      void ensureForYouAhead().then((ok) => {
+        if (ok && currentIndex < contents.length - 1) navigate(1);
+      });
+      return;
+    }
 
     if (nextIndex < 0 || nextIndex >= contents.length) {
       return;
@@ -2238,11 +2483,13 @@
 
     let offset = Math.max(-limit, Math.min(limit, distance));
 
-    // Biên danh sách: càng kéo càng nặng (cao su).
-    if (
-      (offset > 0 && !canPrevious) ||
-      (offset < 0 && !canNext)
-    ) {
+    // Bien: cao su khi het that. Con hasMore / dang tai → cho keo (await prefetch).
+    const waitForNext =
+      !canNext &&
+      !peopleMode &&
+      (hasMore || loading || loadMorePromise !== null);
+    const blockNext = offset < 0 && !canNext && !peopleMode && !waitForNext;
+    if ((offset > 0 && !canPrevious) || blockNext) {
       const t = Math.min(1, Math.abs(offset) / limit);
       const resist =
         EDGE_RESIST_START -
@@ -2475,6 +2722,53 @@
     const nextIndex = currentIndex + direction;
 
     if (nextIndex < 0 || nextIndex >= contents.length) {
+      if (direction === 1 && peopleMode) {
+        dragging = false;
+        // Await cung promise prefetch — khong bo nhip vuot.
+        void ensurePeopleAhead().then((ok) => {
+          if (!ok || currentIndex >= contents.length - 1) {
+            startTransition(
+              null,
+              0,
+              snapDurationMs(from, velocityPxPerMs)
+            );
+            return;
+          }
+          const nextHeight = measureDeck();
+          startTransition(
+            currentIndex + 1,
+            -nextHeight,
+            snapDurationMs(-nextHeight - from, velocityPxPerMs)
+          );
+        });
+        return;
+      }
+
+      if (
+        direction === 1 &&
+        !peopleMode &&
+        (hasMore || loading || loadMorePromise)
+      ) {
+        dragging = false;
+        void ensureForYouAhead().then((ok) => {
+          if (!ok || currentIndex >= contents.length - 1) {
+            startTransition(
+              null,
+              0,
+              snapDurationMs(from, velocityPxPerMs)
+            );
+            return;
+          }
+          const nextHeight = measureDeck();
+          startTransition(
+            currentIndex + 1,
+            -nextHeight,
+            snapDurationMs(-nextHeight - from, velocityPxPerMs)
+          );
+        });
+        return;
+      }
+
       startTransition(
         null,
         0,
@@ -2583,6 +2877,7 @@
       mineOpen = false;
       accountOpen = false;
       writeOpen = false;
+      topicsOpen = false;
     }
 
     if (history.state?.binhyenSheet) history.replaceState(null, "");
@@ -2640,6 +2935,7 @@
       cancelFade();
       window.clearTimeout(closeTimer);
       window.clearTimeout(readerShowTimer);
+      window.clearTimeout(toastTimer);
     };
   });
 </script>
@@ -2704,7 +3000,7 @@
           >
             {section.label}
           </button>
-          {#if section.key === "loved"}
+          {#if section.key === "people"}
             <a class="section section-link" href="/collections">Bộ sưu tập</a>
           {/if}
         {/each}
@@ -2736,7 +3032,7 @@
     onkeydown={handleKeydown}
     onwheel={handleWheel}
   >
-    {#each visibleIndexes as index (contents[index].id)}
+    {#each visibleIndexes as index (`${index}:${contents[index].id}`)}
       {@const content = contents[index]}
       {@const isActive = index === currentIndex}
 
@@ -2818,7 +3114,7 @@
         edit={writeEdit}
         onClose={closeSheet}
         onSignIn={openAccount}
-        onSaved={() => (postsVersion += 1)}
+        onSaved={onWriteSaved}
         onOpenPosts={openMinePosts}
       />
     {:else if writeOpen}
@@ -2845,6 +3141,22 @@
         onClose={closeSheet}
       />
     {/if}
+
+    {#if TopicsSheet && user}
+      <TopicsSheet
+        open={topicsOpen}
+        {user}
+        onClose={closeSheet}
+        onTopicsCommitted={onProfileSaved}
+      />
+    {:else if topicsOpen}
+      <GlassPending
+        open
+        title="Chủ đề"
+        eyebrow="Điều bạn muốn gặp nhiều hơn"
+        onClose={closeSheet}
+      />
+    {/if}
   </div>
 
   {#if collectionMode && collectionTotal > 1 && contents.length > 0}
@@ -2861,15 +3173,29 @@
     </div>
   {/if}
 
+  {#if toastText}
+    <div class="app-toast" role="status" aria-live="polite">{toastText}</div>
+  {/if}
+
   <footer class="bottom" inert={reading}>
     <nav class="dock" aria-label="Điều hướng chính">
-      <button type="button" class="dock-item">
+      <button
+        type="button"
+        class="dock-item"
+        aria-label="Chủ đề"
+        aria-haspopup="dialog"
+        aria-expanded={topicsOpen}
+        onpointerdown={warmTopics}
+        onmouseenter={warmTopics}
+        onclick={openTopics}
+      >
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="6" cy="18" r="2" />
-          <circle cx="18" cy="6" r="2" />
-          <path d="M8 18h6.5a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7H16" />
+          <path
+            d="M7 5.5h7.2a2.8 2.8 0 0 1 2 1.15L20 11l-3.8 4.35a2.8 2.8 0 0 1-2 1.15H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z"
+          />
+          <circle cx="9.2" cy="12" r="1.15" />
         </svg>
-        <span>Hành trình</span>
+        <span>Chủ đề</span>
       </button>
       <button
         type="button"
@@ -3101,6 +3427,9 @@
               !articleError}
           >
             <h2 id={`read-title-${item.id}`}>{item.title}</h2>
+            {#if item.authorName}
+              <p class="reader-byline">— {item.authorName}</p>
+            {/if}
 
             {#if articleError}
               <p class="reader-wait">{articleError}</p>
@@ -3139,42 +3468,20 @@
     </article>
   {/if}
 
-  <p class="loading-slot" aria-live="polite">
-    {#if loading && !canNext}
-      <span>{NEXT_PAGE_STATUS}</span>
-    {/if}
-    <span class="loading-slot-sizer" aria-hidden="true">
-      {NEXT_PAGE_STATUS}
-    </span>
-  </p>
-
-  <p class="other-items-slot" aria-live="polite">
-    {#if showingAllSeen}
-      <span>{ALL_SEEN_NOTE}</span>
-    {/if}
-    <span class="other-items-sizer" aria-hidden="true">
-      {ALL_SEEN_NOTE}
-    </span>
-  </p>
-
-  <div class="end-slot" aria-live="polite">
-    {#if atEnd}
-      <div class="end-slot-face">
-        <span>{collectionMode ? COLLECTION_END_NOTE : END_NOTE}</span>
-        {#if collectionMode}
+  {#if collectionMode}
+    <div class="end-slot" aria-live="polite">
+      {#if atCollectionEnd}
+        <div class="end-slot-face">
+          <span>{COLLECTION_END_NOTE}</span>
           <a class="end-slot-link" href="/collections">Xem bộ sưu tập</a>
-        {:else}
-          <button type="button" onclick={restartSession}>
-            {RESTART_LABEL}
-          </button>
-        {/if}
+        </div>
+      {/if}
+      <div class="end-slot-sizer" aria-hidden="true">
+        <span>{COLLECTION_END_NOTE}</span>
+        <a class="end-slot-link" href="/collections">Xem bộ sưu tập</a>
       </div>
-    {/if}
-    <div class="end-slot-sizer" aria-hidden="true">
-      <span>{collectionMode ? COLLECTION_END_NOTE : END_NOTE}</span>
-      <span class="end-slot-button">{RESTART_LABEL}</span>
     </div>
-  </div>
+  {/if}
 
   <div class="error-slot" aria-live="assertive">
     {#if loadError && contents.length > 0}
@@ -3594,42 +3901,6 @@
       padding-inline: 8px;
     }
   }
-  .loading-slot {
-    display: grid;
-    flex: 0 0 auto;
-    margin: var(--space-2) 0 0;
-    color: var(--color-text-muted);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-    text-align: center;
-  }
-
-  .loading-slot span {
-    grid-area: 1 / 1;
-  }
-
-  .loading-slot-sizer {
-    visibility: hidden;
-  }
-
-  .other-items-slot {
-    display: grid;
-    flex: 0 0 auto;
-    margin-top: var(--space-3);
-    color: var(--color-text-secondary);
-    font-size: var(--text-xs);
-    line-height: 1.6;
-    text-align: center;
-  }
-
-  .other-items-slot span {
-    grid-area: 1 / 1;
-  }
-
-  .other-items-sizer {
-    visibility: hidden;
-  }
-
   .end-slot {
     display: grid;
     flex: 0 0 auto;
@@ -3906,6 +4177,39 @@
     background: transparent;
   }
 
+  .app-toast {
+    position: absolute;
+    right: 16px;
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    left: 16px;
+    z-index: 12;
+    width: max-content;
+    max-width: calc(100% - 32px);
+    margin-inline: auto;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-text) 88%, transparent);
+    color: var(--color-sheet);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.35;
+    text-align: center;
+    pointer-events: none;
+    animation: toast-in 220ms ease both;
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .bottom {
     position: relative;
     z-index: 2;
@@ -3970,8 +4274,6 @@
     stroke-linejoin: round;
   }
 
-  .loading-slot,
-  .other-items-slot,
   .end-slot,
   .error-slot {
     position: absolute;
@@ -3984,7 +4286,6 @@
     pointer-events: none;
   }
 
-  .loading-slot button,
   .end-slot button,
   .error-slot button {
     pointer-events: auto;
@@ -4452,6 +4753,19 @@
     font-weight: 400;
     letter-spacing: -0.03em;
     line-height: 1.28;
+  }
+
+  .reader h2:has(+ .reader-byline) {
+    margin-bottom: 0;
+  }
+
+  .reader-byline {
+    margin: 0.85rem 0 1.6rem;
+    color: color-mix(in oklab, var(--color-text) 62%, transparent);
+    font-size: clamp(14px, 2.2vw, 18px);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
   }
 
   .reader h3 {
