@@ -136,6 +136,8 @@
   let topicFilter = $state("");
   let sort = $state<"updated" | "created">("updated");
   let reviewOnly = $state(false);
+  /** Mobile: an bo loc, bam nut moi mo. */
+  let filtersOpen = $state(false);
   let items = $state(initialItems);
   let nextCursor = $state(initialCursor);
   let total = $state(initialTotal);
@@ -1286,9 +1288,8 @@
               Mỗi bài là một thẻ. Bấm mũi tên để mở và sửa. Danh sách tải từng trang.
             </p>
           </div>
-          <button class="add-content" type="button" onclick={startNew}>
-            <span class="add-mark" aria-hidden="true">+</span>
-            Thêm nội dung
+          <button class="add-btn" type="button" onclick={startNew}>
+            + Thêm nội dung
           </button>
         </header>
 
@@ -1347,31 +1348,49 @@
               oninput={scheduleSearch}
             />
           </label>
-          <label>
-            <span class="visually-hidden">Loại nội dung</span>
-            <select value={kindFilter} onchange={chooseKind}>
-              <option value="">Mọi loại</option>
-              {#each contentKinds as kind (kind)}
-                <option value={kind}>{kindLabels[kind]}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span class="visually-hidden">Chủ đề</span>
-            <select value={topicFilter} onchange={chooseTopic}>
-              <option value="">Mọi chủ đề</option>
-              {#each topicChoices as topic (topic.slug)}
-                <option value={topic.slug}>{topic.label}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span class="visually-hidden">Sắp xếp</span>
-            <select value={sort} onchange={chooseSort}>
-              <option value="updated">Ngày cập nhật</option>
-              <option value="created">Ngày tạo</option>
-            </select>
-          </label>
+          <button
+            type="button"
+            class="filter-toggle"
+            class:is-active={kindFilter !== "" ||
+              topicFilter !== "" ||
+              sort !== "updated"}
+            aria-expanded={filtersOpen}
+            aria-controls="content-filters"
+            onclick={() => (filtersOpen = !filtersOpen)}
+          >
+            {filtersOpen ? "Ẩn bộ lọc" : "Bộ lọc"}
+          </button>
+          <div
+            id="content-filters"
+            class="filter-fields"
+            class:is-open={filtersOpen}
+          >
+            <label>
+              <span class="visually-hidden">Loại nội dung</span>
+              <select value={kindFilter} onchange={chooseKind}>
+                <option value="">Mọi loại</option>
+                {#each contentKinds as kind (kind)}
+                  <option value={kind}>{kindLabels[kind]}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span class="visually-hidden">Chủ đề</span>
+              <select value={topicFilter} onchange={chooseTopic}>
+                <option value="">Mọi chủ đề</option>
+                {#each topicChoices as topic (topic.slug)}
+                  <option value={topic.slug}>{topic.label}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span class="visually-hidden">Sắp xếp</span>
+              <select value={sort} onchange={chooseSort}>
+                <option value="updated">Ngày cập nhật</option>
+                <option value="created">Ngày tạo</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <p class="result-line" aria-live="polite">
@@ -1494,7 +1513,6 @@
                         1000
                     ).toISOString()}
                   >
-                    {sort === "created" ? "Tạo" : "Cập nhật"}
                     {dateLabel(
                       sort === "created" ? item.createdAt : item.updatedAt
                     )}
@@ -2107,40 +2125,18 @@
     flex: 1 1 auto;
   }
 
-  .add-content {
-    display: inline-flex;
+  .add-btn {
     flex: 0 0 auto;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 48px;
-    padding: var(--space-1) var(--space-5) var(--space-1) var(--space-1);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-weight: 600;
-  }
-
-  .add-mark {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
+    min-height: 36px;
+    padding: 0 var(--space-4);
+    border: 0;
     border-radius: var(--radius-full);
     background: var(--color-primary);
     color: var(--color-surface);
-    font-size: 1.35rem;
-    line-height: 1;
-  }
-
-  .add-content:hover {
-    border-color: var(--color-primary);
-    background: var(--color-theme-peace);
-  }
-
-  .add-content:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 3px;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
   }
 
   .page-head p {
@@ -2205,6 +2201,14 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+  }
+
+  .filter-toggle {
+    display: none;
+  }
+
+  .filter-fields {
+    display: contents;
   }
 
   .editor-actions {
@@ -2287,6 +2291,20 @@
     border-radius: var(--radius-sm);
     background: var(--color-surface);
     color: var(--color-text);
+  }
+
+  /* Loc: mui ten dropdown dich vao trong, khong sat mep phai. */
+  .toolbar select {
+    appearance: none;
+    padding-inline-end: 2.25rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239aa39a' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='m19 9-7 7-7-7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    background-size: 1rem;
+  }
+
+  :global(html[data-theme="dark"]) .toolbar select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23c5cec5' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='m19 9-7 7-7-7'/%3E%3C/svg%3E");
   }
 
   textarea {
@@ -2831,9 +2849,9 @@
       max-width: 40rem;
     }
 
-    .add-content {
+    .add-btn {
       justify-self: stretch;
-      justify-content: center;
+      min-height: 2.75rem;
       width: 100%;
     }
 
@@ -3006,13 +3024,62 @@
 
     .toolbar {
       display: grid;
+      grid-template-columns: 1fr auto;
+      gap: var(--space-2);
+      align-items: center;
+    }
+
+    .search {
+      grid-column: 1;
+      flex: none;
+      width: auto;
+      min-width: 0;
+    }
+
+    .search input {
+      box-sizing: border-box;
+      height: 2.5rem;
+      margin-top: 0;
+      padding: 0 0.75rem;
+      font-size: 0.85rem;
+    }
+
+    .filter-toggle {
+      display: inline-flex;
+      grid-column: 2;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      height: 2.5rem;
+      min-height: 2.5rem;
+      padding: 0 0.85rem;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-surface);
+      color: var(--color-text);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .filter-toggle.is-active {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    .filter-fields {
+      display: none;
+      grid-column: 1 / -1;
       grid-template-columns: 1fr;
       gap: var(--space-2);
     }
 
-    .toolbar label,
-    .search {
-      flex: none;
+    .filter-fields.is-open {
+      display: grid;
+    }
+
+    .filter-fields label {
       width: 100%;
     }
 
@@ -3024,6 +3091,17 @@
     .content-cards > li {
       padding: var(--space-3) var(--space-4);
       border-radius: 1rem;
+    }
+
+    .content-tools {
+      gap: 0.2rem;
+    }
+
+    .open-card,
+    .delete-card,
+    .view-card {
+      width: 28px;
+      height: 28px;
     }
 
     .excerpt {
@@ -3059,6 +3137,14 @@
       display: grid;
       grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr));
       gap: var(--space-2);
+    }
+
+    .filter-toggle {
+      display: none;
+    }
+
+    .filter-fields {
+      display: contents;
     }
 
     .toolbar label,

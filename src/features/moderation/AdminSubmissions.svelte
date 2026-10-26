@@ -29,16 +29,28 @@
     minute: "2-digit"
   });
 
+  type TabPage = { items: Submission[]; next: string | null };
+
   let status = $state<ContentStatus>("draft");
   let items = $state<Submission[]>(initialItems);
   let next = $state<string | null>(initialCursor);
   let counts = $state<SubmissionCounts>(initialCounts);
+  /** Cache tung tab — doi tab khong flash "Dang tai". */
+  let cache = $state<Partial<Record<ContentStatus, TabPage>>>({
+    draft: { items: initialItems, next: initialCursor }
+  });
   let loading = $state(false);
+  /** Dang noi them trang (nut Xem them) — tach khoi refresh tab. */
+  let loadingMore = $state(false);
+  /** Chi hien chu cho khi request that su cham (tranh nhay layout). */
+  let showSlowLoad = $state(false);
   let busyId = $state("");
   let rejecting = $state("");
   let reason = $state("");
   let notice = $state<{ tone: "ok" | "error"; text: string } | null>(null);
   let serial = 0;
+  let slowTimer: ReturnType<typeof setTimeout> | undefined;
+  const SLOW_LOAD_MS = 280;
 
   function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === "object"
@@ -55,9 +67,37 @@
     window.location.replace("/admin/login");
   }
 
+  function clearSlowLoad() {
+    clearTimeout(slowTimer);
+    slowTimer = undefined;
+    showSlowLoad = false;
+  }
+
+  function armSlowLoad() {
+    clearTimeout(slowTimer);
+    showSlowLoad = false;
+    slowTimer = setTimeout(() => {
+      if (loading) showSlowLoad = true;
+    }, SLOW_LOAD_MS);
+  }
+
+  function rememberTab(target: ContentStatus, page: TabPage) {
+    cache = { ...cache, [target]: page };
+  }
+
   async function load(target: ContentStatus, cursor: string | null) {
     const mine = ++serial;
-    loading = true;
+    const appending = cursor !== null;
+
+    if (appending) {
+      loadingMore = true;
+      clearSlowLoad();
+    } else {
+      loading = true;
+      // Chi can chu cho khi chua co cache (lan dau vao tab).
+      if (cache[target] === undefined) armSlowLoad();
+      else clearSlowLoad();
+    }
 
     const params = new URLSearchParams({ status: target });
     if (cursor) params.set("cursor", cursor);
@@ -79,8 +119,13 @@
       }
 
       const page = row.items as Submission[];
-      items = cursor ? [...items, ...page] : page;
-      next = typeof row.nextCursor === "string" ? row.nextCursor : null;
+      const merged = appending ? [...items, ...page] : page;
+      const nextCursor =
+        typeof row.nextCursor === "string" ? row.nextCursor : null;
+
+      items = merged;
+      next = nextCursor;
+      rememberTab(target, { items: merged, next: nextCursor });
 
       const fresh = record(row.counts);
       if (fresh) counts = fresh as unknown as SubmissionCounts;
@@ -89,16 +134,44 @@
         notice = { tone: "error", text: "Không có kết nối." };
       }
     } finally {
-      if (mine === serial) loading = false;
+      if (mine === serial) {
+        loading = false;
+        loadingMore = false;
+        clearSlowLoad();
+      }
     }
   }
 
   function chooseTab(key: ContentStatus) {
     if (key === status && !loading) return;
+
     status = key;
+    notice = null;
+    rejecting = "";
+
+    const hit = cache[key];
+    if (hit) {
+      // Hien cache ngay — khong xoa list, khong chu "Dang tai".
+      items = hit.items;
+      next = hit.next;
+      void load(key, null);
+      return;
+    }
+
+    // Tab chua cache: counts = 0 → empty that, khong fetch cho.
+    if (counts[key] === 0) {
+      items = [];
+      next = null;
+      rememberTab(key, { items: [], next: null });
+      clearSlowLoad();
+      loading = false;
+      return;
+    }
+
+    // Lan dau vao tab: xoa list (tranh hien bai tab cu / bam nham),
+    // nhung chua hien "Dang tai" cho den khi request that su cham.
     items = [];
     next = null;
-    notice = null;
     void load(key, null);
   }
 
@@ -142,6 +215,13 @@
       }
 
       items = items.filter((entry) => entry.id !== item.id);
+      rememberTab(status, { items, next });
+      // Tab dich co the da cache — lan sau vao se tai lai cho dung.
+      if (cache[to]) {
+        const nextCache = { ...cache };
+        delete nextCache[to];
+        cache = nextCache;
+      }
       rejecting = "";
       counts = {
         ...counts,
@@ -205,8 +285,10 @@
         <p class="notice {notice.tone}" role="status">{notice.text}</p>
       {/if}
 
-      {#if items.length === 0 && loading}
-        <p class="empty">Đang tải…</p>
+      {#if items.length === 0 && loading && showSlowLoad}
+        <p class="empty" aria-live="polite">Đang tải…</p>
+      {:else if items.length === 0 && loading}
+        <div class="list-hold" aria-busy="true" aria-live="polite"></div>
       {:else if items.length === 0}
         <p class="empty">{EMPTY[status]}</p>
       {:else}
@@ -214,7 +296,13 @@
           {#each items as item (item.id)}
             <li class="card">
               <p class="meta">
-                <span>{item.category}</span>
+                {#if item.topics.length > 0}
+                  {#each item.topics as topic (topic)}
+                    <span class="topic-chip">{topic}</span>
+                  {/each}
+                {:else}
+                  <span class="topic-chip">{item.category}</span>
+                {/if}
                 <span>· {item.authorName}</span>
                 <span>· gửi {when.format(item.createdAt * 1000)}</span>
                 {#if item.editedAt}
@@ -232,13 +320,6 @@
                   <summary>Đọc nội dung</summary>
                   <p class="body">{item.body}</p>
                 </details>
-              {/if}
-              {#if item.topics.length > 0}
-                <ul class="topics" aria-label="Chủ đề">
-                  {#each item.topics as topic (topic)}
-                    <li>{topic}</li>
-                  {/each}
-                </ul>
               {/if}
 
               {#if item.status === "draft" && rejecting === item.id}
@@ -299,8 +380,8 @@
                     </button>
                   {:else if item.status === "published"}
                     <span class="state">
-                      Đang hiện trên trang chủ{item.publishedAt
-                        ? ` từ ${when.format(item.publishedAt * 1000)}`
+                      Đã duyệt{item.publishedAt
+                        ? ` ${when.format(item.publishedAt * 1000)}`
                         : ""}
                     </span>
                     <button
@@ -328,10 +409,10 @@
           <button
             type="button"
             class="more"
-            disabled={loading}
+            disabled={loadingMore}
             onclick={() => load(status, next)}
           >
-            {loading ? "Đang tải…" : "Xem thêm"}
+            {loadingMore ? "Đang tải…" : "Xem thêm"}
           </button>
         {/if}
       {/if}
@@ -343,9 +424,15 @@
     display: grid;
     align-content: start;
     gap: var(--space-4);
+    box-sizing: border-box;
+    width: 100%;
     min-width: 0;
-    max-width: 860px;
+    max-width: none;
     padding: var(--space-6);
+  }
+
+  .page-head {
+    max-width: 42rem;
   }
 
   h1 {
@@ -366,8 +453,14 @@
     margin-top: var(--space-2);
   }
 
+  /* Giu cho khi doi tab nhanh — khong nhay chu "Dang tai". */
+  .list-hold {
+    min-height: 4.5rem;
+  }
+
   .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
     border-bottom: 1px solid var(--color-border);
   }
@@ -415,15 +508,27 @@
 
   .list {
     display: grid;
+    /* Tu 1→2→3 cot; khong qua 3 cot tren man rong. */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--space-4);
+    align-items: start;
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
+  @media (max-width: 1100px) {
+    .list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
   .card {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-3);
+    min-width: 0;
+    min-height: 100%;
     padding: var(--space-5);
     border: 1px solid var(--color-border);
     border-radius: 1.2rem;
@@ -433,7 +538,8 @@
   .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-1);
+    align-items: center;
+    gap: var(--space-2);
     margin: 0;
     color: var(--color-text-muted);
     font-size: var(--text-xs);
@@ -444,23 +550,31 @@
     font-weight: 600;
   }
 
-  .meta span:first-child {
-    color: var(--color-eyebrow);
-    letter-spacing: 0.06em;
+  .topic-chip {
+    padding: 2px var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    color: var(--color-text-secondary);
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
   h2 {
     margin: 0;
     font-family: var(--font-editorial);
-    font-size: clamp(1.35rem, 2vw, 1.65rem);
+    font-size: clamp(1.2rem, 1.4vw, 1.45rem);
     font-weight: 500;
     line-height: 1.3;
+    overflow-wrap: anywhere;
   }
 
   .description {
     margin: 0;
     color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
   }
 
   details summary {
@@ -479,29 +593,17 @@
     overflow-wrap: anywhere;
   }
 
-  .topics {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .topics li {
-    padding: 2px var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    color: var(--color-text-secondary);
-    font-size: var(--text-xs);
-  }
-
   .actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-4);
-    margin-top: var(--space-2);
+    margin-top: auto;
+    padding-top: var(--space-2);
+  }
+
+  .actions .quiet {
+    margin-left: auto;
   }
 
   .primary {
@@ -536,6 +638,7 @@
 
   .more {
     justify-self: center;
+    grid-column: 1 / -1;
     padding: var(--space-3);
   }
 
@@ -602,11 +705,9 @@
     .main {
       gap: var(--space-4);
       padding: var(--space-4);
-      max-width: none;
     }
 
     .tabs {
-      flex-wrap: wrap;
       gap: 0;
     }
 
@@ -632,20 +733,22 @@
     }
 
     .list {
+      grid-template-columns: 1fr;
       gap: var(--space-3);
     }
 
     .actions {
-      display: grid;
-      grid-template-columns: 1fr;
       gap: var(--space-2);
     }
 
-    .actions .primary,
-    .actions .quiet {
+    .actions .primary {
       width: 100%;
       min-height: 2.75rem;
       justify-content: center;
+    }
+
+    .actions .quiet {
+      margin-left: auto;
     }
   }
 </style>

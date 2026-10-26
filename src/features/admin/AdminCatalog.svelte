@@ -909,6 +909,7 @@
   @media (max-width: 767px) {
     .main {
       padding: var(--space-3);
+      gap: var(--space-3);
     }
 
     h1 {
@@ -920,13 +921,97 @@
       gap: var(--space-2);
     }
 
-    .meta {
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-2) var(--space-3);
+    /* The gon: icon | tieu de+mo ta | nut — meta 1 hang 3 cot. */
+    .cards li {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      align-items: start;
+      gap: 0.3rem 0.7rem;
+      min-height: 0;
+      padding: var(--space-3) var(--space-4);
+      border-radius: 1rem;
     }
 
-    .meta > :last-child:nth-child(odd) {
+    .card-head,
+    .card-body {
+      display: contents;
+    }
+
+    .mark {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      align-self: center;
+      width: 2rem;
+      height: 2rem;
+    }
+
+    .mark svg {
+      width: 1.2rem;
+      height: 1.2rem;
+    }
+
+    .arrow,
+    .row-actions {
+      grid-column: 3;
+      grid-row: 1 / 3;
+      align-self: center;
+      justify-self: end;
+    }
+
+    .row-actions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.35rem;
+    }
+
+    .row-actions .primary {
+      min-height: 2rem;
+      padding: 0 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .card-body > h3,
+    .card-body > .field:not(.order) {
+      grid-column: 2;
+      grid-row: 1;
+      align-self: end;
+      min-width: 0;
+    }
+
+    h3 {
+      font-size: 1.2rem;
+      line-height: 1.25;
+    }
+
+    .blurb {
+      grid-column: 2;
+      grid-row: 2;
+      align-self: start;
+      margin: 0;
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+
+    .meta {
       grid-column: 1 / -1;
+      grid-row: 3;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--space-2);
+      margin: 0.55rem 0 0;
+      padding-top: 0.65rem;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .meta dd {
+      font-size: 0.88rem;
+      overflow-wrap: anywhere;
+    }
+
+    .notice {
+      grid-column: 1 / -1;
+      margin-top: 0.4rem;
     }
 
     .create-dialog {

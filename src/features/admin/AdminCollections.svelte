@@ -257,7 +257,7 @@
     }
   }
 
-  async function saveMeta() {
+  async function saveMeta(publish = false) {
     if (busy) return;
     if (!title.trim()) {
       flashNotice("error", "Nhập tên bộ.");
@@ -268,13 +268,20 @@
     if (createOpen) createNotice = null;
     else notice = null;
 
+    const nextStatus: CollectionStatus = publish
+      ? "published"
+      : metaMode === "create"
+        ? "draft"
+        : status;
+    if (publish || metaMode === "create") status = nextStatus;
+
     const payload = {
       title: title.trim(),
       slug: slug.trim(),
       description: description.trim(),
       coverUrl: coverUrl.trim(),
       coverAlt: coverAlt.trim(),
-      status,
+      status: nextStatus,
       sortOrder
     };
     const creating = metaMode === "create";
@@ -589,11 +596,13 @@
 
 <AdminShell current="collections" onleave={leave} {pending}>
   <main class="main">
-    <header class="head">
-      <div class="head-copy">
+    <header class="page-head">
+      <div>
         {#if view === "grid"}
-          <p class="eyebrow">Biên tập</p>
-          <h1>Bộ sưu tập</h1>
+          <h1>
+            Bộ sưu tập
+            <span class="count">{collections.length}</span>
+          </h1>
           <p>Chọn bộ để xem chi tiết, hoặc bấm + để thêm bài nhanh.</p>
         {:else}
           <button type="button" class="back-link" onclick={goGrid}>
@@ -603,28 +612,25 @@
           <p>Xem thông tin bộ và sắp xếp thứ tự bài vuốt.</p>
         {/if}
       </div>
-      <div class="head-actions">
-        {#if view === "grid"}
-          <span class="count-pill">{collections.length} bộ</span>
-          <button
-            type="button"
-            class="btn soft"
-            onclick={startCreate}
-            disabled={busy || createOpen}
-          >
-            + Bộ mới
-          </button>
-        {:else if detail}
-          <button
-            type="button"
-            class="btn soft"
-            disabled={busy || createOpen}
-            onclick={() => void openAddModal(detail)}
-          >
-            + Thêm bài
-          </button>
-        {/if}
-      </div>
+      {#if view === "grid"}
+        <button
+          type="button"
+          class="add-btn"
+          onclick={startCreate}
+          disabled={busy || createOpen}
+        >
+          + Bộ mới
+        </button>
+      {:else if detail}
+        <button
+          type="button"
+          class="add-btn"
+          disabled={busy || createOpen}
+          onclick={() => void openAddModal(detail)}
+        >
+          + Thêm bài
+        </button>
+      {/if}
     </header>
 
     {#if notice}
@@ -872,6 +878,7 @@
 <dialog
   class="create-dialog"
   bind:this={createDialog}
+  aria-labelledby="create-collection-title"
   onclose={() => {
     createOpen = false;
     createNotice = null;
@@ -882,50 +889,61 @@
       class="create-sheet"
       onsubmit={(event) => {
         event.preventDefault();
-        void saveMeta();
+        void saveMeta(false);
       }}
     >
       <header class="create-head">
         <div class="create-head-copy">
-          <p class="eyebrow">
-            {metaMode === "edit" ? "Chỉnh sửa" : "Bộ sưu tập mới"}
-          </p>
-          <h2>
-            {metaMode === "edit" ? "Thông tin bộ" : "Tạo tuyển tập"}
+          <h2 id="create-collection-title">
+            {metaMode === "edit" ? "Chỉnh sửa bộ sưu tập" : "Thêm bộ sưu tập"}
           </h2>
-          <p class="create-lede">
-            {metaMode === "edit"
-              ? "Cập nhật tên, ảnh bìa, trạng thái và lời mở đầu."
-              : "Đặt tên, ảnh bìa và lời mở đầu — gắn bài sau bằng nút + trên thẻ."}
-          </p>
+          {#if metaMode === "edit"}
+            <p class="status status-{status}">{statusLabel(status)}</p>
+          {/if}
         </div>
         <button
           type="button"
-          class="icon-btn create-close"
+          class="text-button create-close"
           onclick={closeCreateModal}
-          aria-label="Đóng"
           disabled={busy}
         >
-          ✕
+          Đóng
         </button>
       </header>
 
+      {#if createNotice}
+        <p
+          class="create-notice"
+          class:ok={createNotice.tone === "ok"}
+          class:err={createNotice.tone === "error"}
+          role={createNotice.tone === "error" ? "alert" : "status"}
+        >
+          {createNotice.text}
+        </p>
+      {/if}
+
       <div class="create-body">
-        <div class="create-cover-pane">
+        <fieldset class="create-pane" disabled={busy || coverUploading}>
+          <p class="field-label">Ảnh bìa</p>
           <button
             type="button"
             class="create-cover-drop"
             class:has-image={!!coverUrl}
+            class:is-busy={coverUploading}
             disabled={busy || coverUploading}
             onclick={() => createCoverInput?.click()}
           >
             {#if coverUrl}
               <img src={coverUrl} alt={coverAlt || title || "Ảnh bìa"} />
-              <span class="create-cover-hint">Đổi ảnh</span>
+              <span class="create-cover-hint">
+                {coverUploading ? "Đang tải…" : "Đổi ảnh"}
+              </span>
             {:else}
               <span class="create-cover-mark" aria-hidden="true">❀</span>
-              <strong>{coverUploading ? "Đang tải…" : "Thêm ảnh bìa"}</strong>
-              <span>JPG, PNG hoặc WebP · tối đa 2MB</span>
+              <strong>
+                {coverUploading ? "Đang tải lên…" : "Kéo thả hoặc chọn ảnh"}
+              </strong>
+              <span>JPEG, PNG, WebP · tối đa 2 MB · tuỳ chọn</span>
             {/if}
           </button>
           <input
@@ -933,13 +951,14 @@
             type="file"
             accept="image/jpeg,image/png,image/webp"
             hidden
+            disabled={busy || coverUploading}
             onchange={onCoverPicked}
           />
           {#if coverUrl}
             <div class="create-cover-actions">
               <button
                 type="button"
-                class="btn soft tiny"
+                class="chip"
                 disabled={busy || coverUploading}
                 onclick={() => createCoverInput?.click()}
               >
@@ -947,17 +966,24 @@
               </button>
               <button
                 type="button"
-                class="btn soft tiny"
+                class="chip"
                 disabled={busy || coverUploading}
                 onclick={clearCover}
               >
                 Gỡ ảnh
               </button>
             </div>
+            <label class="field">
+              <span>Chú thích ảnh</span>
+              <input
+                maxlength="160"
+                placeholder="Mô tả ngắn cho ảnh bìa (tuỳ chọn)"
+                bind:value={coverAlt}
+                disabled={busy || coverUploading}
+              />
+            </label>
           {/if}
-        </div>
 
-        <div class="create-fields">
           <label class="field">
             <span>Tên bộ</span>
             <input
@@ -994,70 +1020,77 @@
             ></textarea>
           </label>
 
-          <div class="create-meta-row">
-            <label class="field">
-              <span>Trạng thái</span>
-              <select bind:value={status} disabled={busy}>
-                <option value="draft">Nháp</option>
-                <option value="published">Xuất bản</option>
-                <option value="archived">Lưu trữ</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Thứ tự</span>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                bind:value={sortOrder}
+          {#if metaMode === "edit"}
+            <p class="field-label" id="collection-status-label">Trạng thái</p>
+            <div
+              class="chips"
+              role="group"
+              aria-labelledby="collection-status-label"
+            >
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={status === "draft"}
                 disabled={busy}
-              />
-            </label>
-          </div>
+                onclick={() => (status = "draft")}
+              >
+                Nháp
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={status === "published"}
+                disabled={busy}
+                onclick={() => (status = "published")}
+              >
+                Xuất bản
+              </button>
+              <button
+                type="button"
+                class="chip"
+                aria-pressed={status === "archived"}
+                disabled={busy}
+                onclick={() => (status = "archived")}
+              >
+                Lưu trữ
+              </button>
+            </div>
+          {/if}
 
-          <label class="field">
-            <span>Chú thích ảnh</span>
+          <label class="field order-field">
+            <span>Thứ tự</span>
             <input
-              maxlength="160"
-              placeholder="Mô tả ngắn cho ảnh bìa (tuỳ chọn)"
-              bind:value={coverAlt}
-              disabled={busy || coverUploading}
+              type="number"
+              min="0"
+              max="1000000"
+              bind:value={sortOrder}
+              disabled={busy}
             />
           </label>
-        </div>
+        </fieldset>
       </div>
 
-      {#if createNotice}
-        <p
-          class="create-notice"
-          class:ok={createNotice.tone === "ok"}
-          class:err={createNotice.tone === "error"}
-          role="status"
-        >
-          {createNotice.text}
-        </p>
-      {/if}
-
       <footer class="create-foot">
-        <button
-          type="button"
-          class="btn soft"
-          onclick={closeCreateModal}
-          disabled={busy}
-        >
-          Huỷ
-        </button>
-        <button
-          type="submit"
-          class="btn primary"
-          disabled={busy || coverUploading || !title.trim()}
-        >
-          {busy
-            ? "Đang lưu…"
-            : metaMode === "edit"
-              ? "Lưu thay đổi"
-              : "Tạo bộ"}
-        </button>
+        <div class="create-foot-main">
+          <button
+            type="submit"
+            disabled={busy || coverUploading || !title.trim()}
+          >
+            {busy
+              ? "Đang lưu…"
+              : metaMode === "edit" && status === "published"
+                ? "Lưu thay đổi"
+                : "Lưu bản nháp"}
+          </button>
+          <button
+            type="button"
+            class="primary"
+            disabled={busy || coverUploading || !title.trim()}
+            onclick={() => void saveMeta(true)}
+          >
+            Xuất bản
+          </button>
+        </div>
       </footer>
     </form>
   {/if}
@@ -1179,40 +1212,72 @@
       var(--color-background);
   }
 
-  .head {
+  .page-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
-  .eyebrow {
-    margin: 0 0 6px;
-    color: var(--color-primary);
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+  .page-head > div {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
-  .head h1 {
-    margin: 0 0 6px;
-    font-family: var(--font-editorial);
-    font-size: clamp(1.8rem, 3vw, 2.35rem);
-    font-weight: 400;
-    letter-spacing: -0.03em;
-  }
-
-  .head-copy > p:last-child {
+  .page-head h1 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
     margin: 0;
+    font-size: var(--text-xl);
+    font-weight: 560;
+    letter-spacing: -0.02em;
+  }
+
+  .page-head p {
+    margin: var(--space-2) 0 0;
     max-width: 36rem;
     color: var(--color-text-secondary);
-    font-size: 0.95rem;
+    font-size: var(--text-sm);
     line-height: 1.45;
   }
 
+  .count {
+    min-width: 1.5rem;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-full);
+    background: var(--color-theme-peace);
+    color: var(--color-accent-peace);
+    font-size: var(--text-xs);
+    font-weight: 650;
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .add-btn {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .add-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .back-link {
-    margin: 0 0 8px;
+    display: block;
+    margin: 0 0 var(--space-2);
     padding: 0;
     border: 0;
     background: transparent;
@@ -1223,21 +1288,13 @@
     cursor: pointer;
   }
 
-  .head-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .count-pill {
-    padding: 6px 12px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    background: color-mix(in srgb, var(--color-surface) 88%, transparent);
-    color: var(--color-text-secondary);
-    font-size: 0.78rem;
-    font-weight: 650;
+  .eyebrow {
+    margin: 0 0 6px;
+    color: var(--color-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .notice {
@@ -1266,14 +1323,24 @@
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 14px;
+    /* Toi da 4 cot, gian deu het chieu ngang. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-4);
+    align-items: stretch;
+  }
+
+  .card-grid > li {
+    display: flex;
+    min-width: 0;
   }
 
   .collection-card {
-    display: grid;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     gap: 10px;
-    min-height: 180px;
+    width: 100%;
+    min-height: 100%;
     padding: 16px;
     border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
     border-radius: calc(var(--radius-lg) + 2px);
@@ -1375,6 +1442,12 @@
     font-weight: 400;
     letter-spacing: -0.02em;
     line-height: 1.25;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-height: calc(1.25em * 2);
   }
 
   .cover-field > span {
@@ -1456,8 +1529,10 @@
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-height: calc(1.45em * 2);
+    flex: 1 1 auto;
   }
 
   .card-blurb.muted {
@@ -1467,6 +1542,7 @@
 
   .card-foot {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
@@ -1975,17 +2051,18 @@
   .add-dialog {
     margin: auto;
     padding: 0;
-    border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent);
-    border-radius: calc(var(--radius-lg) + 4px);
-    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-background);
     color: var(--color-text);
-    box-shadow: 0 28px 80px color-mix(in srgb, var(--color-text) 16%, transparent);
   }
 
   .create-dialog {
-    width: min(760px, calc(100vw - 1.5rem));
-    max-height: min(92dvh, 900px);
-    overflow: auto;
+    --create-inset: 1.5rem;
+    width: min(720px, calc(100vw - var(--create-inset)));
+    height: calc(100dvh - var(--create-inset));
+    max-height: calc(100dvh - var(--create-inset));
+    overflow: hidden;
   }
 
   .add-dialog {
@@ -1994,60 +2071,121 @@
 
   .create-dialog::backdrop,
   .add-dialog::backdrop {
-    background: color-mix(in srgb, #0f1411 52%, transparent);
-    backdrop-filter: blur(4px);
+    background: color-mix(in oklab, #0a100c 52%, transparent);
+    backdrop-filter: blur(5px);
+  }
+
+  :global(html[data-theme="dark"]) .create-dialog::backdrop,
+  :global(html[data-theme="dark"]) .add-dialog::backdrop {
+    background: color-mix(in oklab, #020403 78%, transparent);
   }
 
   .create-sheet {
-    display: grid;
-    gap: 1.25rem;
-    padding: 1.4rem 1.5rem 1.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    padding: var(--space-5);
+    overflow: hidden;
   }
 
   .create-head {
     display: flex;
+    flex: 0 0 auto;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--space-3);
   }
 
   .create-head-copy {
-    display: grid;
-    gap: 0.3rem;
     min-width: 0;
   }
 
   .create-head h2 {
     margin: 0;
-    font-family: var(--font-editorial);
-    font-size: clamp(1.55rem, 3vw, 1.85rem);
-    font-weight: 400;
-    letter-spacing: -0.03em;
-    line-height: 1.2;
+    font-size: var(--text-lg);
+    font-weight: 560;
+    letter-spacing: -0.02em;
   }
 
-  .create-lede {
-    margin: 0.15rem 0 0;
-    max-width: 34rem;
+  .create-head .status {
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-sm);
+  }
+
+  .text-button {
+    padding: 0;
+    border: 0;
+    background: transparent;
     color: var(--color-text-secondary);
-    font-size: 0.92rem;
-    line-height: 1.45;
+    font: inherit;
+    cursor: pointer;
   }
 
   .create-close {
-    flex: none;
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.35rem 0.5rem;
+    font-weight: 600;
   }
 
   .create-body {
-    display: grid;
-    grid-template-columns: minmax(200px, 0.92fr) minmax(0, 1.2fr);
-    gap: 1.25rem 1.4rem;
-    align-items: start;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    margin-inline-end: calc(-1 * var(--space-5));
+    padding-inline-end: var(--space-5);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
 
-  .create-cover-pane {
+  .create-pane {
     display: grid;
-    gap: 0.65rem;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .field-label {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .chip {
+    min-height: 36px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .chip[aria-pressed="true"] {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    color: var(--color-surface);
+  }
+
+  .order-field {
+    max-width: 10rem;
   }
 
   .create-cover-drop {
@@ -2056,45 +2194,36 @@
     place-items: center;
     gap: 0.35rem;
     width: 100%;
-    min-height: 220px;
+    min-height: 180px;
     padding: 1rem;
     overflow: hidden;
-    border: 0;
-    border-radius: calc(var(--radius-lg) + 2px);
-    background:
-      linear-gradient(
-        160deg,
-        color-mix(in srgb, var(--color-primary) 10%, transparent),
-        transparent 55%
-      ),
-      color-mix(in srgb, var(--color-surface-soft) 88%, transparent);
+    border: 1px dashed color-mix(in srgb, var(--color-border) 90%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-surface-soft) 88%, transparent);
     color: var(--color-text-secondary);
     text-align: center;
     cursor: pointer;
-    transition:
-      transform 160ms ease,
-      background 160ms ease,
-      filter 160ms ease;
   }
 
   .create-cover-drop:hover:not(:disabled) {
-    filter: brightness(1.04);
-    transform: translateY(-1px);
+    border-color: var(--color-primary);
   }
 
-  .create-cover-drop:disabled {
+  .create-cover-drop:disabled,
+  .create-cover-drop.is-busy {
     cursor: progress;
     opacity: 0.8;
   }
 
   .create-cover-drop.has-image {
     padding: 0;
+    border-style: solid;
   }
 
   .create-cover-drop img {
     display: block;
     width: 100%;
-    height: 220px;
+    height: 180px;
     object-fit: cover;
   }
 
@@ -2130,21 +2259,11 @@
   .create-cover-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .create-fields {
-    display: grid;
-    gap: 0.85rem;
-  }
-
-  .create-meta-row {
-    display: grid;
-    grid-template-columns: 1.2fr 0.8fr;
-    gap: 0.75rem;
+    gap: var(--space-2);
   }
 
   .create-notice {
+    flex: 0 0 auto;
     margin: 0;
     padding: 0.7rem 0.85rem;
     border-radius: var(--radius-md);
@@ -2163,31 +2282,69 @@
 
   .create-foot {
     display: flex;
-    justify-content: flex-end;
-    gap: 0.65rem;
-    padding-top: 0.15rem;
-    border-top: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+    flex-wrap: wrap;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in oklab, var(--color-surface) 94%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  .create-foot-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .create-foot-main > button {
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .create-foot-main > button.primary {
+    border: 0;
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font-weight: 650;
+  }
+
+  .create-foot-main > button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .status-draft {
+    color: var(--color-text-secondary);
+  }
+
+  .status-published {
+    color: var(--color-success, var(--color-primary));
+  }
+
+  .status-archived {
+    color: var(--color-text-muted, var(--color-text-secondary));
   }
 
   @media (max-width: 767px) {
-    .create-body,
-    .create-meta-row {
-      grid-template-columns: 1fr;
-    }
-
     .create-cover-drop,
     .create-cover-drop img {
-      min-height: 180px;
-      height: 180px;
+      min-height: 160px;
+      height: 160px;
     }
 
-    .create-foot {
-      flex-direction: column-reverse;
-    }
-
-    .create-foot .btn {
-      width: 100%;
-      justify-content: center;
+    .order-field {
+      max-width: none;
     }
   }
 
@@ -2282,18 +2439,21 @@
       padding: var(--space-4);
     }
 
-    .head {
-      flex-direction: column;
-      align-items: stretch;
+    .page-head {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--space-3);
     }
 
-    .head-actions {
+    .add-btn {
+      justify-self: stretch;
+      min-height: 2.75rem;
       width: 100%;
     }
 
-    .head-actions .btn {
-      flex: 1 1 auto;
-      justify-content: center;
+    .card-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-3);
     }
 
     .member-list li {
@@ -2318,11 +2478,9 @@
     }
 
     .create-sheet {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
       gap: 0;
-      height: 100dvh;
-      max-height: 100dvh;
+      height: 100%;
+      max-height: 100%;
       padding: 0;
       padding-top: env(safe-area-inset-top);
     }
@@ -2334,13 +2492,17 @@
       background: var(--color-surface);
     }
 
-    .create-body,
-    .create-meta-row {
-      grid-template-columns: 1fr;
+    .create-head h2 {
+      font-size: 1.1rem;
+    }
+
+    .create-notice {
+      margin: var(--space-3) var(--space-4) 0;
     }
 
     .create-body {
       min-height: 0;
+      margin-inline-end: 0;
       overflow: auto;
       overscroll-behavior: contain;
       padding: var(--space-4);
@@ -2348,16 +2510,29 @@
 
     .create-cover-drop,
     .create-cover-drop img {
-      min-height: 180px;
-      height: 180px;
+      min-height: 160px;
+      height: 160px;
     }
 
     .create-foot {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-2);
       margin: 0;
       padding: var(--space-3) var(--space-4);
       padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
-      border-top: 1px solid var(--color-border);
       background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+    }
+
+    .create-foot-main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      width: 100%;
+      gap: var(--space-2);
+    }
+
+    .create-foot-main > button {
+      width: 100%;
     }
 
     .add-dialog {
@@ -2405,17 +2580,21 @@
       padding: var(--space-3);
     }
 
-    .head h1 {
-      font-size: 1.45rem;
+    .page-head h1 {
+      font-size: 1.25rem;
     }
 
-    .head-copy > p:last-child {
-      font-size: 0.85rem;
+    .page-head p {
+      font-size: 0.82rem;
     }
 
     .card-grid {
       grid-template-columns: 1fr;
       gap: var(--space-3);
+    }
+
+    .collection-card h2 {
+      font-size: 1.2rem;
     }
 
     .info-actions {

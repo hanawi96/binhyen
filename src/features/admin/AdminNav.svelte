@@ -130,9 +130,40 @@
         type="button"
         aria-expanded={open}
         aria-controls="admin-nav-panel"
+        aria-label={open ? "Đóng menu" : "Mở menu"}
         onclick={toggle}
       >
-        {open ? "Đóng" : "Menu"}
+        {#if open}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M6 18 18 6M6 6l12 12"
+            />
+          </svg>
+        {:else}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+            />
+          </svg>
+        {/if}
       </button>
     </div>
   </header>
@@ -467,16 +498,22 @@
     }
 
     .menu-btn {
-      min-height: 2.25rem;
-      padding: 0 0.85rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      padding: 0;
       border: 1px solid var(--color-border);
       border-radius: var(--radius-md);
       background: var(--color-surface-soft);
       color: var(--color-text);
-      font: inherit;
-      font-size: 0.9rem;
-      font-weight: 600;
       cursor: pointer;
+    }
+
+    .menu-btn svg {
+      width: 1.35rem;
+      height: 1.35rem;
     }
 
     .menu-btn:focus-visible {

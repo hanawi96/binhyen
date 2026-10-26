@@ -42,6 +42,9 @@
   @media (max-width: 1023px) {
     .shell {
       grid-template-columns: 1fr;
+      /* auto + 1fr: topbar khong bi stretch — tranh day noi dung xuong giua man hinh */
+      grid-template-rows: auto minmax(0, 1fr);
+      align-content: start;
     }
   }
 </style>
