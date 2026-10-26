@@ -17,6 +17,8 @@
     title: string;
     status: string;
     kind: string;
+    format?: string;
+    description?: string;
   }
 
   type View = "grid" | "detail";
@@ -63,7 +65,12 @@
   let addBusy = $state(false);
   let addNotice = $state("");
   let addManualId = $state("");
+  let manualPreview = $state<SearchHit | null>(null);
+  let manualPreviewLoading = $state(false);
+  let manualPreviewError = $state("");
+  let manualLookupSerial = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let manualTimer: ReturnType<typeof setTimeout> | undefined;
   let addDialog = $state<HTMLDialogElement | null>(null);
 
   async function leave() {
@@ -464,12 +471,21 @@
     queuePersistItems(detail.id, contentIds);
   }
 
+  function clearManualPreview() {
+    clearTimeout(manualTimer);
+    manualLookupSerial += 1;
+    manualPreview = null;
+    manualPreviewLoading = false;
+    manualPreviewError = "";
+  }
+
   async function openAddModal(item: CollectionSummary) {
     addTarget = item;
     addDetail = null;
     addQuery = "";
     addHits = [];
     addManualId = "";
+    clearManualPreview();
     addNotice = "";
     addOpen = true;
     queueMicrotask(() => addDialog?.showModal());
@@ -491,6 +507,8 @@
     addTarget = null;
     addDetail = null;
     addHits = [];
+    addManualId = "";
+    clearManualPreview();
     addNotice = "";
   }
 
@@ -499,6 +517,84 @@
     searchTimer = setTimeout(() => {
       void runSearch(addQuery);
     }, 220);
+  }
+
+  function scheduleManualPreview() {
+    clearTimeout(manualTimer);
+    const id = addManualId.trim();
+    if (!id) {
+      clearManualPreview();
+      return;
+    }
+
+    manualPreviewLoading = true;
+    manualPreviewError = "";
+    manualPreview = null;
+    manualTimer = setTimeout(() => {
+      void lookupManualId(id);
+    }, 280);
+  }
+
+  async function lookupManualId(raw: string) {
+    const id = raw.trim();
+    const serial = ++manualLookupSerial;
+
+    if (!id) {
+      if (serial === manualLookupSerial) clearManualPreview();
+      return;
+    }
+
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) {
+      if (serial !== manualLookupSerial) return;
+      manualPreview = null;
+      manualPreviewLoading = false;
+      manualPreviewError = "Mã bài không hợp lệ.";
+      return;
+    }
+
+    manualPreviewLoading = true;
+    manualPreviewError = "";
+
+    try {
+      const response = await fetch(
+        `/api/admin/contents/${encodeURIComponent(id)}`
+      );
+      const body = await response.json().catch(() => null);
+      if (serial !== manualLookupSerial) return;
+
+      if (!response.ok || !body?.success || !body.content) {
+        manualPreview = null;
+        manualPreviewError =
+          typeof body?.error === "string"
+            ? body.error
+            : "Không tìm thấy bài với mã này.";
+        return;
+      }
+
+      const row = body.content as Record<string, unknown>;
+      if (typeof row.id !== "string" || typeof row.title !== "string") {
+        manualPreview = null;
+        manualPreviewError = "Phản hồi không hợp lệ.";
+        return;
+      }
+
+      manualPreview = {
+        id: row.id,
+        title: row.title,
+        status: typeof row.status === "string" ? row.status : "",
+        kind: typeof row.kind === "string" ? row.kind : "",
+        format: typeof row.format === "string" ? row.format : "",
+        description:
+          typeof row.description === "string" ? row.description : ""
+      };
+      manualPreviewError = "";
+    } catch {
+      if (serial !== manualLookupSerial) return;
+      manualPreview = null;
+      manualPreviewError = "Không có kết nối.";
+    } finally {
+      if (serial === manualLookupSerial) manualPreviewLoading = false;
+    }
   }
 
   async function runSearch(q: string) {
@@ -581,6 +677,7 @@
       upsertList(saved);
       if (detail?.id === saved.id) detail = saved;
       addManualId = "";
+      clearManualPreview();
       addNotice = "Đã thêm vào bộ.";
     } catch {
       addNotice = "Không có kết nối.";
@@ -679,7 +776,20 @@
                     disabled={busy}
                     onclick={() => void openAddModal(item)}
                   >
-                    <span aria-hidden="true">+</span>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 4.5v15m7.5-7.5h-15"
+                      />
+                    </svg>
                   </button>
                 </div>
 
@@ -1099,94 +1209,143 @@
 <dialog
   class="add-dialog"
   bind:this={addDialog}
+  aria-labelledby="add-to-collection-title"
   onclose={() => {
     addOpen = false;
   }}
 >
   {#if addOpen && addTarget}
-    <form method="dialog" class="add-sheet" onsubmit={(e) => e.preventDefault()}>
+    <form
+      class="add-sheet"
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (!manualPreview || memberIds.has(manualPreview.id)) return;
+        void appendToCollection(manualPreview.id);
+      }}
+    >
       <header class="add-head">
-        <div>
-          <p class="eyebrow">Thêm vào bộ</p>
-          <h2>{addTarget.title}</h2>
+        <div class="add-head-copy">
+          <h2 id="add-to-collection-title">Thêm bài vào bộ</h2>
+          <p class="add-head-sub">{addTarget.title}</p>
         </div>
-        <button type="button" class="icon-btn" onclick={closeAddModal} aria-label="Đóng">
-          ✕
+        <button
+          type="button"
+          class="text-button add-close"
+          onclick={closeAddModal}
+          disabled={addBusy}
+        >
+          Đóng
         </button>
       </header>
 
-      <label class="field">
-        <span>Tìm bài theo tiêu đề</span>
-        <input
-          placeholder="Gõ vài chữ…"
-          bind:value={addQuery}
-          oninput={scheduleSearch}
-          disabled={addBusy}
-        />
-      </label>
-
-      {#if addSearching}
-        <p class="add-status">Đang tìm…</p>
-      {:else if addQuery.trim() && addHits.length === 0}
-        <p class="add-status">Không thấy bài phù hợp.</p>
-      {:else if addHits.length > 0}
-        <ul class="hit-list">
-          {#each addHits as hit (hit.id)}
-            {@const already = memberIds.has(hit.id)}
-            <li>
-              <div class="hit-main">
-                <strong>{hit.title}</strong>
-                <span>
-                  <code>{hit.id}</code>
-                  · {hit.status}
-                </span>
-              </div>
-              <button
-                type="button"
-                class="btn soft tiny"
-                disabled={addBusy || already}
-                onclick={() => void appendToCollection(hit.id)}
-              >
-                {already ? "Đã có" : "Thêm"}
-              </button>
-            </li>
-          {/each}
-        </ul>
+      {#if addNotice}
+        <p class="add-notice" role="status">{addNotice}</p>
       {/if}
 
-      <div class="add-divider"><span>hoặc dán mã bài</span></div>
+      <div class="add-body">
+        <label class="field">
+          <span>Tìm theo tiêu đề</span>
+          <input
+            type="search"
+            placeholder="Gõ vài chữ…"
+            bind:value={addQuery}
+            oninput={scheduleSearch}
+            disabled={addBusy}
+          />
+        </label>
 
-      <div class="add-row">
-        <input
-          placeholder="c0a1…"
-          bind:value={addManualId}
-          disabled={addBusy}
-          onkeydown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              void appendToCollection(addManualId);
-            }
-          }}
-        />
-        <button
-          type="button"
-          class="btn primary"
-          disabled={addBusy}
-          onclick={() => void appendToCollection(addManualId)}
-        >
-          Thêm
-        </button>
+        {#if addSearching}
+          <p class="add-status">Đang tìm…</p>
+        {:else if addQuery.trim() && addHits.length === 0}
+          <p class="add-status">Không thấy bài phù hợp.</p>
+        {:else if addHits.length > 0}
+          <ul class="hit-list">
+            {#each addHits as hit (hit.id)}
+              {@const already = memberIds.has(hit.id)}
+              <li>
+                <div class="hit-main">
+                  <strong>{hit.title}</strong>
+                  <span>
+                    <code>{hit.id}</code>
+                    · {hit.status}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="hit-add"
+                  class:is-done={already}
+                  disabled={addBusy || already}
+                  onclick={() => void appendToCollection(hit.id)}
+                >
+                  {already ? "Đã có" : "Thêm"}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        <div class="add-divider" role="separator">
+          <span>hoặc dán mã bài</span>
+        </div>
+
+        <label class="field">
+          <span>Mã bài</span>
+          <span class="hint">Copy từ nút clipboard trên thẻ ở trang Quản lý nội dung.</span>
+          <div class="add-row">
+            <input
+              placeholder="Ví dụ: c0a1…"
+              bind:value={addManualId}
+              oninput={scheduleManualPreview}
+              disabled={addBusy}
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              type="submit"
+              class="primary"
+              disabled={addBusy ||
+                !manualPreview ||
+                memberIds.has(manualPreview.id)}
+            >
+              {addBusy ? "Đang thêm…" : "Thêm"}
+            </button>
+          </div>
+        </label>
+
+        {#if manualPreviewLoading}
+          <p class="add-status">Đang mở bài…</p>
+        {:else if manualPreviewError}
+          <p class="add-status is-error">{manualPreviewError}</p>
+        {:else if manualPreview}
+          {@const already = memberIds.has(manualPreview.id)}
+          <div class="manual-preview" class:is-done={already}>
+            <div class="hit-main">
+              <strong>{manualPreview.title}</strong>
+              {#if manualPreview.description?.trim()}
+                <p class="manual-preview-desc">
+                  {manualPreview.description.trim()}
+                </p>
+              {/if}
+              <span>
+                <code>{manualPreview.id}</code>
+                {#if already}
+                  · Đã có trong bộ
+                {/if}
+              </span>
+            </div>
+          </div>
+        {/if}
       </div>
 
-      {#if addNotice}
-        <p class="add-status" role="status">{addNotice}</p>
-      {/if}
-
-      {#if addDetail}
-        <p class="add-foot">
-          Bộ đang có <strong>{addDetail.items.length}</strong> bài.
+      <footer class="add-foot">
+        <p>
+          {#if addDetail}
+            Bộ đang có <strong>{addDetail.items.length}</strong> bài
+          {:else}
+            Thêm bài bằng tìm kiếm hoặc mã bài
+          {/if}
         </p>
-      {/if}
+      </footer>
     </form>
   {/if}
 </dialog>
@@ -1370,22 +1529,22 @@
     place-items: center;
     width: 2.25rem;
     height: 2.25rem;
-    border: 1px solid color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-    border-radius: var(--radius-full);
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: var(--color-primary);
-    font-size: 1.35rem;
-    font-weight: 500;
-    line-height: 1;
     cursor: pointer;
-    transition:
-      transform 0.15s ease,
-      background 0.15s ease;
+    transition: transform 0.15s ease;
+  }
+
+  .plus-btn svg {
+    width: 1.35rem;
+    height: 1.35rem;
   }
 
   .plus-btn:hover:not(:disabled) {
     transform: scale(1.05);
-    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
   }
 
   .card-cover {
@@ -2066,7 +2225,11 @@
   }
 
   .add-dialog {
-    width: min(520px, calc(100vw - 2rem));
+    --add-inset: 1.5rem;
+    width: min(560px, calc(100vw - var(--add-inset)));
+    height: calc(100dvh - var(--add-inset));
+    max-height: calc(100dvh - var(--add-inset));
+    overflow: hidden;
   }
 
   .create-dialog::backdrop,
@@ -2349,24 +2512,79 @@
   }
 
   .add-sheet {
-    display: grid;
-    gap: 14px;
-    padding: 1.25rem 1.35rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    padding: var(--space-5);
+    overflow: hidden;
   }
 
   .add-head {
     display: flex;
+    flex: 0 0 auto;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
+  }
+
+  .add-head-copy {
+    min-width: 0;
   }
 
   .add-head h2 {
     margin: 0;
-    font-family: var(--font-editorial);
-    font-size: 1.35rem;
-    font-weight: 400;
+    font-size: var(--text-lg);
+    font-weight: 560;
     letter-spacing: -0.02em;
+  }
+
+  .add-head-sub {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .add-close {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.35rem 0.5rem;
+    font-weight: 600;
+  }
+
+  .add-notice {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+    font-size: 0.88rem;
+  }
+
+  .add-body {
+    display: grid;
+    flex: 1 1 0;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+    min-height: 0;
+    margin-inline-end: calc(-1 * var(--space-5));
+    padding-inline-end: var(--space-5);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .add-body .hint {
+    display: block;
+    margin: 0.15rem 0 0.45rem;
+    color: var(--color-text-muted, var(--color-text-secondary));
+    font-size: 0.78rem;
+    line-height: 1.35;
   }
 
   .hit-list {
@@ -2374,43 +2592,74 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 8px;
-    max-height: 240px;
-    overflow: auto;
+    gap: var(--space-2);
   }
 
   .hit-list li {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px 12px;
+    gap: var(--space-3);
+    padding: 0.75rem 0.85rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--color-background);
+    background: var(--color-surface);
   }
 
   .hit-main {
     display: grid;
-    gap: 4px;
+    gap: 0.2rem;
     min-width: 0;
   }
 
   .hit-main strong {
     font-size: 0.92rem;
+    font-weight: 600;
     line-height: 1.3;
+    overflow-wrap: anywhere;
   }
 
   .hit-main span {
     color: var(--color-text-secondary);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
+  }
+
+  .hit-main code {
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+  }
+
+  .hit-add {
+    flex: 0 0 auto;
+    min-height: 2rem;
+    padding: 0 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .hit-add:not(.is-done):hover:not(:disabled) {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .hit-add.is-done,
+  .hit-add:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   .add-divider {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
-    gap: 10px;
+    gap: 0.65rem;
     align-items: center;
+    margin: 0.15rem 0;
     color: var(--color-text-secondary);
     font-size: 0.75rem;
   }
@@ -2422,15 +2671,89 @@
     background: var(--color-border);
   }
 
-  .add-status,
-  .add-foot {
+  .add-status {
     margin: 0;
     color: var(--color-text-secondary);
     font-size: 0.85rem;
   }
 
+  .add-status.is-error {
+    color: var(--color-error);
+  }
+
+  .manual-preview {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
+  }
+
+  .manual-preview.is-done {
+    opacity: 0.72;
+  }
+
+  .manual-preview-desc {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .add-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
   .add-row input {
-    flex: 1 1 180px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .add-row .primary {
+    min-height: 40px;
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .add-row .primary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .add-foot {
+    flex: 0 0 auto;
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in oklab, var(--color-surface) 94%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  .add-foot p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .add-foot strong {
+    color: var(--color-text);
+    font-weight: 650;
   }
 
   @media (max-width: 1023px) {
@@ -2535,19 +2858,59 @@
       width: 100%;
     }
 
-    .add-dialog {
-      overflow: auto;
-    }
-
     .add-sheet {
-      min-height: 100dvh;
-      padding: 0 0 max(var(--space-4), env(safe-area-inset-bottom));
+      gap: 0;
+      height: 100%;
+      max-height: 100%;
+      padding: 0;
       padding-top: env(safe-area-inset-top);
-      gap: var(--space-3);
     }
 
-    .add-sheet > :not(.add-head) {
-      padding-inline: var(--space-4);
+    .add-head {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .add-head h2 {
+      font-size: 1.1rem;
+    }
+
+    .add-notice {
+      margin: var(--space-3) var(--space-4) 0;
+    }
+
+    .add-body {
+      min-height: 0;
+      margin-inline-end: 0;
+      padding: var(--space-4);
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+
+    .hit-list li {
+      grid-template-columns: 1fr;
+      gap: var(--space-2);
+    }
+
+    .hit-add {
+      justify-self: start;
+      min-height: 2.25rem;
+    }
+
+    .add-row {
+      grid-template-columns: 1fr;
+    }
+
+    .add-row .primary {
+      width: 100%;
+    }
+
+    .add-foot {
+      margin: 0;
+      padding: var(--space-3) var(--space-4);
+      padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+      background: color-mix(in oklab, var(--color-surface) 92%, transparent);
     }
   }
 

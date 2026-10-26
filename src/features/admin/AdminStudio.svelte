@@ -151,6 +151,9 @@
   let collectionChoices = $state(initialCollections.map((item) => ({ ...item })));
   let listLoading = $state(false);
   let listError = $state("");
+  let copiedId = $state("");
+  let copyFlash = $state("");
+  let copyTimer = 0;
   let detailLoading = $state(false);
   let saving = $state(false);
   let mediaUploading = $state(false);
@@ -1040,6 +1043,27 @@
     deleteDialog?.showModal();
   }
 
+  async function copyContentId(item: AdminListItem, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(item.id);
+      copiedId = item.id;
+      copyFlash = `Đã copy mã bài: ${item.id}`;
+      window.clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(() => {
+        if (copiedId === item.id) copiedId = "";
+        copyFlash = "";
+      }, 1800);
+    } catch {
+      copyFlash = "Không copy được mã bài.";
+      window.clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(() => {
+        copyFlash = "";
+      }, 2200);
+    }
+  }
+
   function cancelDelete() {
     if (deleting) return;
     deleteDialog?.close();
@@ -1402,6 +1426,9 @@
             <span> Đang tải…</span>
           {/if}
         </p>
+        {#if copyFlash}
+          <p class="copy-flash" role="status">{copyFlash}</p>
+        {/if}
         {#if listError}
           <p class="notice error" role="alert">{listError}</p>
         {/if}
@@ -1418,84 +1445,9 @@
               <li>
                 <div class="content-top">
                   <span class="kind">{formatLabels[item.format]}</span>
-                  <div class="content-tools">
-                    <span class="status status-{item.status}">
-                      {statusLabels[item.status]}
-                    </span>
-                    {#if item.status === "published"}
-                      <a
-                        class="view-card"
-                        href={`/?v=${encodeURIComponent(item.id)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Xem ${item.title} trên trang chủ`}
-                        title="Xem trên trang chủ"
-                        onclick={(event) => event.stopPropagation()}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke-width="1.5"
-                          stroke="currentColor"
-                          aria-hidden="true"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
-                          />
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                          />
-                        </svg>
-                      </a>
-                    {/if}
-                    <button
-                      type="button"
-                      class="delete-card"
-                      aria-label={`Xóa ${item.title}`}
-                      onclick={(event) => askDelete(item, event)}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke-width="1.5"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      class="open-card"
-                      aria-label={`Chỉnh sửa ${item.title}`}
-                      onclick={() => openItem(item)}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke-width="1.5"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-                        />
-                      </svg>
-                    </button>
-                  </div>
+                  <span class="status status-{item.status}">
+                    {statusLabels[item.status]}
+                  </span>
                 </div>
                 <h2>{item.title}</h2>
                 {#if item.description}
@@ -1517,6 +1469,121 @@
                       sort === "created" ? item.createdAt : item.updatedAt
                     )}
                   </time>
+                </div>
+                <div class="content-tools" role="group" aria-label="Công cụ bài">
+                  {#if item.status === "published"}
+                    <a
+                      class="view-card"
+                      href={`/?v=${encodeURIComponent(item.id)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Xem ${item.title} trên trang chủ`}
+                      title="Xem trên trang chủ"
+                      onclick={(event) => event.stopPropagation()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
+                        />
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                        />
+                      </svg>
+                    </a>
+                  {/if}
+                  <button
+                    type="button"
+                    class="copy-card"
+                    class:is-copied={copiedId === item.id}
+                    aria-label={`Copy mã bài ${item.title}`}
+                    title={copiedId === item.id ? "Đã copy" : "Copy mã bài"}
+                    onclick={(event) => void copyContentId(item, event)}
+                  >
+                    {#if copiedId === item.id}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="m4.5 12.75 6 6 9-13.5"
+                        />
+                      </svg>
+                    {:else}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"
+                        />
+                      </svg>
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="delete-card"
+                    aria-label={`Xóa ${item.title}`}
+                    onclick={(event) => askDelete(item, event)}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="open-card"
+                    aria-label={`Chỉnh sửa ${item.title}`}
+                    onclick={() => openItem(item)}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                      />
+                    </svg>
+                  </button>
                 </div>
               </li>
             {/each}
@@ -2337,9 +2404,15 @@
   }
 
   .content-cards > li {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top tools"
+      "title title"
+      "excerpt excerpt"
+      "meta meta";
     gap: var(--space-3);
+    align-content: start;
     min-height: 220px;
     padding: var(--space-5);
     border: 1px solid var(--color-border);
@@ -2362,12 +2435,34 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-2);
   }
 
+  .content-top {
+    grid-area: top;
+    min-width: 0;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-3);
+  }
+
   .content-tools {
-    flex: 0 0 auto;
+    grid-area: tools;
+    justify-self: end;
+    align-self: start;
+    justify-content: flex-end;
+  }
+
+  .content-cards > li > h2 {
+    grid-area: title;
+  }
+
+  .content-cards > li > .excerpt {
+    grid-area: excerpt;
+  }
+
+  .content-meta {
+    grid-area: meta;
+    justify-content: space-between;
   }
 
   .kind {
@@ -2378,7 +2473,8 @@
 
   .open-card,
   .delete-card,
-  .view-card {
+  .view-card,
+  .copy-card {
     display: grid;
     place-items: center;
     width: 32px;
@@ -2389,11 +2485,13 @@
     color: var(--color-text-secondary);
     opacity: 0.75;
     text-decoration: none;
+    cursor: pointer;
   }
 
   .open-card svg,
   .delete-card svg,
-  .view-card svg {
+  .view-card svg,
+  .copy-card svg {
     width: 18px;
     height: 18px;
     fill: none;
@@ -2408,13 +2506,19 @@
   .delete-card:hover,
   .delete-card:focus-visible,
   .view-card:hover,
-  .view-card:focus-visible {
+  .view-card:focus-visible,
+  .copy-card:hover,
+  .copy-card:focus-visible {
     opacity: 1;
   }
 
   .view-card:hover,
-  .view-card:focus-visible {
+  .view-card:focus-visible,
+  .copy-card:hover,
+  .copy-card:focus-visible,
+  .copy-card.is-copied {
     color: var(--color-primary);
+    opacity: 1;
   }
 
   .delete-card:hover,
@@ -2545,6 +2649,13 @@
     margin: 0;
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
+  }
+
+  .copy-flash {
+    margin: 0;
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+    font-weight: 600;
   }
 
   .notice {
@@ -2887,14 +2998,16 @@
 
     .open-card,
     .delete-card,
-    .view-card {
+    .view-card,
+    .copy-card {
       width: 44px;
       height: 44px;
     }
 
     .open-card svg,
     .delete-card svg,
-    .view-card svg {
+    .view-card svg,
+    .copy-card svg {
       width: 20px;
       height: 20px;
     }
@@ -3089,19 +3202,41 @@
     }
 
     .content-cards > li {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "top"
+        "title"
+        "excerpt"
+        "meta"
+        "tools";
+      gap: var(--space-2);
       padding: var(--space-3) var(--space-4);
       border-radius: 1rem;
     }
 
     .content-tools {
-      gap: 0.2rem;
+      width: 100%;
+      justify-content: flex-end;
+      gap: 0.1rem;
+      margin-top: 0.15rem;
+      padding-top: 0.45rem;
+      border-top: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
     }
 
     .open-card,
     .delete-card,
-    .view-card {
-      width: 28px;
-      height: 28px;
+    .view-card,
+    .copy-card {
+      width: 2rem;
+      height: 2rem;
+    }
+
+    .open-card svg,
+    .delete-card svg,
+    .view-card svg,
+    .copy-card svg {
+      width: 1rem;
+      height: 1rem;
     }
 
     .excerpt {
