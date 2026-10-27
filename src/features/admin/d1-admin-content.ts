@@ -35,6 +35,8 @@ export interface AdminListItem {
   status: ContentStatus;
   topics: string[];
   reviewReasons: ReviewReason[];
+  likeCount: number;
+  saveCount: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -96,6 +98,8 @@ interface ListRow {
   kind: string;
   theme: string;
   status: string;
+  like_count: number | null;
+  save_count: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -219,7 +223,17 @@ const reviewPredicate = `NOT EXISTS (
 )`;
 
 function orderColumn(sort: AdminListQuery["sort"]): string {
-  return sort === "created" ? "c.created_at" : "c.updated_at";
+  if (sort === "created") return "c.created_at";
+  if (sort === "likes") return "COALESCE(s.like_count, 0)";
+  if (sort === "saves") return "COALESCE(s.save_count, 0)";
+  return "c.updated_at";
+}
+
+function cursorAt(sort: AdminListQuery["sort"], row: ListRow): number {
+  if (sort === "created") return row.created_at;
+  if (sort === "likes") return asCount(row.like_count);
+  if (sort === "saves") return asCount(row.save_count);
+  return row.updated_at;
 }
 
 async function loadTopicsForContents(
@@ -336,15 +350,18 @@ export async function listAdminContents(
   const includeTotal = options.includeTotal ?? true;
   const includeStats = options.includeStats ?? true;
   const column = orderColumn(query.sort);
-  const cursorAt = query.cursor?.at ?? -1;
+  const cursorValue = query.cursor?.at ?? -1;
   const cursorId = query.cursor?.id ?? "";
 
   const pagePromise = db
     .prepare(
       `SELECT
          c.id, c.title, c.description, c.category, c.format, c.kind, c.theme,
-         c.status, c.created_at, c.updated_at
+         c.status, c.created_at, c.updated_at,
+         COALESCE(s.like_count, 0) AS like_count,
+         COALESCE(s.save_count, 0) AS save_count
        FROM contents c
+       LEFT JOIN content_stats s ON s.content_id = c.id
        ${filterSql()}
          AND (
            ?7 < 0
@@ -356,7 +373,7 @@ export async function listAdminContents(
     )
     .bind(
       ...filterBindings(query),
-      cursorAt,
+      cursorValue,
       cursorId,
       query.limit + 1
     )
@@ -415,6 +432,8 @@ export async function listAdminContents(
       status,
       topics,
       reviewReasons: topics.length === 0 ? ["topic"] : [],
+      likeCount: asCount(row.like_count),
+      saveCount: asCount(row.save_count),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     });
@@ -423,11 +442,7 @@ export async function listAdminContents(
   const last = visible.at(-1);
   const nextCursor =
     rows.length > query.limit && last
-      ? encodeAdminCursor(
-          query.sort,
-          query.sort === "created" ? last.created_at : last.updated_at,
-          last.id
-        )
+      ? encodeAdminCursor(query.sort, cursorAt(query.sort, last), last.id)
       : null;
 
   return {

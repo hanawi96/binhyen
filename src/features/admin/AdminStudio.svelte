@@ -28,6 +28,7 @@
     type MediaSize
   } from "../media/media-dimensions";
   import { isCatalogSlug } from "./catalog";
+  import type { AdminSort } from "./content-draft";
 
   const PAGE_SIZE = 12;
 
@@ -125,7 +126,7 @@
   let statusFilter = $state<"all" | ContentStatus>("all");
   let formatFilter = $state<ContentFormat | "">("");
   let topicFilter = $state("");
-  let sort = $state<"updated" | "created">("updated");
+  let sort = $state<AdminSort>("updated");
   let reviewOnly = $state(false);
   /** Mobile: an bo loc, bam nut moi mo. */
   let filtersOpen = $state(false);
@@ -261,6 +262,14 @@
           typeof topic === "string" && isCatalogSlug(topic)
       ),
       reviewReasons: row.reviewReasons.filter(isReason),
+      likeCount:
+        typeof row.likeCount === "number" && Number.isFinite(row.likeCount)
+          ? Math.max(0, row.likeCount)
+          : 0,
+      saveCount:
+        typeof row.saveCount === "number" && Number.isFinite(row.saveCount)
+          ? Math.max(0, row.saveCount)
+          : 0,
       createdAt,
       updatedAt
     };
@@ -738,11 +747,17 @@
     cancelSearch();
     const target = event.currentTarget;
     if (!(target instanceof HTMLSelectElement)) return;
-    if (target.value !== "updated" && target.value !== "created") {
+    const next = target.value;
+    if (
+      next !== "updated" &&
+      next !== "created" &&
+      next !== "likes" &&
+      next !== "saves"
+    ) {
       return;
     }
-    if (sort === target.value) return;
-    sort = target.value;
+    if (sort === next) return;
+    sort = next;
     resetPages();
     void loadList();
   }
@@ -1408,6 +1423,8 @@
               <select value={sort} onchange={chooseSort}>
                 <option value="updated">Ngày cập nhật</option>
                 <option value="created">Ngày tạo</option>
+                <option value="likes">Nhiều thích nhất</option>
+                <option value="saves">Nhiều lưu nhất</option>
               </select>
             </label>
           </div>
@@ -1471,6 +1488,28 @@
                   </time>
                 </div>
                 <div class="content-tools" role="group" aria-label="Công cụ bài">
+                  <span class="engage" aria-label="Tương tác">
+                    <span
+                      class="engage-stat like"
+                      title={`${item.likeCount} lượt thích`}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path
+                          d="M8 13.2S2.6 10 2.6 6.1A2.7 2.7 0 0 1 8 4.9a2.7 2.7 0 0 1 5.4 1.2C13.4 10 8 13.2 8 13.2Z"
+                        />
+                      </svg>
+                      {item.likeCount}
+                    </span>
+                    <span
+                      class="engage-stat save"
+                      title={`${item.saveCount} lượt lưu`}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M4.3 2.8h7.4v10.6L8 10.9l-3.7 2.5Z" />
+                      </svg>
+                      {item.saveCount}
+                    </span>
+                  </span>
                   {#if item.status === "published"}
                     <a
                       class="view-card"
@@ -2452,6 +2491,10 @@
     justify-content: flex-end;
   }
 
+  .content-tools .engage {
+    margin-right: 0.35rem;
+  }
+
   .content-cards > li > h2 {
     grid-area: title;
   }
@@ -2636,6 +2679,53 @@
   .topic-badge.is-missing {
     border-color: color-mix(in srgb, #d4b44a 45%, var(--color-border));
     color: #d4b44a;
+  }
+
+  .engage {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 32px;
+  }
+
+  .engage-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .engage-stat svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .engage-stat.like {
+    color: #e85d6c;
+  }
+
+  .engage-stat.like svg {
+    fill: #e85d6c;
+    stroke: #e85d6c;
+  }
+
+  .engage-stat.save {
+    color: #e0b035;
+  }
+
+  .engage-stat.save svg {
+    fill: #e0b035;
+    stroke: #e0b035;
   }
 
   .content-meta time {
@@ -3239,6 +3329,10 @@
       margin-top: 0.15rem;
       padding-top: 0.45rem;
       border-top: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
+    }
+
+    .content-tools .engage {
+      margin-right: auto;
     }
 
     .open-card,

@@ -263,9 +263,21 @@ describe("Content draft", () => {
     expect(encodeAdminCursor("created", 20, "post-1")).toBe(
       "c.20.post-1"
     );
+    expect(encodeAdminCursor("likes", 42, "post-1")).toBe("l.42.post-1");
+    expect(encodeAdminCursor("saves", 7, "post-1")).toBe("s.7.post-1");
     expect(decodeAdminCursor("u.20.post-1")).toEqual({
       sort: "updated",
       at: 20,
+      id: "post-1"
+    });
+    expect(decodeAdminCursor("l.42.post-1")).toEqual({
+      sort: "likes",
+      at: 42,
+      id: "post-1"
+    });
+    expect(decodeAdminCursor("s.7.post-1")).toEqual({
+      sort: "saves",
+      at: 7,
       id: "post-1"
     });
     expect(decodeAdminCursor("20.post-1")).toEqual({

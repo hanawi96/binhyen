@@ -45,7 +45,14 @@ export interface ContentDraftInput {
   collectionIds: string[];
 }
 
-export type AdminSort = "updated" | "created";
+export type AdminSort = "updated" | "created" | "likes" | "saves";
+
+const ADMIN_SORTS: readonly AdminSort[] = [
+  "updated",
+  "created",
+  "likes",
+  "saves"
+];
 
 export interface AdminListQuery {
   status: "all" | ContentStatus;
@@ -333,13 +340,26 @@ export function parseContentDraft(
   };
 }
 
+function sortMark(sort: AdminSort): "u" | "c" | "l" | "s" {
+  if (sort === "created") return "c";
+  if (sort === "likes") return "l";
+  if (sort === "saves") return "s";
+  return "u";
+}
+
+function sortFromMark(mark: string): AdminSort {
+  if (mark === "c") return "created";
+  if (mark === "l") return "likes";
+  if (mark === "s") return "saves";
+  return "updated";
+}
+
 export function encodeAdminCursor(
   sort: AdminSort,
   at: number,
   id: string
 ): string {
-  const mark = sort === "created" ? "c" : "u";
-  return `${mark}.${at}.${id}`;
+  return `${sortMark(sort)}.${at}.${id}`;
 }
 
 export function decodeAdminCursor(
@@ -347,13 +367,13 @@ export function decodeAdminCursor(
 ): { sort: AdminSort; at: number; id: string } | null {
   if (!value) return null;
 
-  const current = /^(u|c)\.(\d{1,12})\.([A-Za-z0-9_-]{1,80})$/.exec(
+  const current = /^(u|c|l|s)\.(\d{1,12})\.([A-Za-z0-9_-]{1,80})$/.exec(
     value
   );
 
   if (current) {
     return {
-      sort: current[1] === "c" ? "created" : "updated",
+      sort: sortFromMark(current[1] ?? "u"),
       at: Number(current[2]),
       id: current[3] ?? ""
     };
@@ -418,9 +438,10 @@ export function parseAdminListQuery(params: {
     return { ok: false, error: "Chủ đề không hợp lệ." };
   }
 
-  const sort = params.sort ?? "updated";
+  const sortValue = params.sort ?? "updated";
+  const sort = oneOf(sortValue, ADMIN_SORTS);
 
-  if (sort !== "updated" && sort !== "created") {
+  if (!sort) {
     return { ok: false, error: "Cách sắp xếp không hợp lệ." };
   }
 
