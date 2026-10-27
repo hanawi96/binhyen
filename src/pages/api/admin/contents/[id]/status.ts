@@ -34,7 +34,7 @@ function isTargetStatus(value: unknown): value is ContentStatus {
  * nen trinh duyet khong tu gui quyen nay.
  */
 export const POST: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const id = params.id;

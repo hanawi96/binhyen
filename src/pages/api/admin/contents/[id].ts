@@ -40,7 +40,7 @@ function contentId(
 }
 
 export const GET: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const id = contentId(params.id);
@@ -77,7 +77,7 @@ export const GET: APIRoute = async ({ request, params }) => {
 };
 
 export const PATCH: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const id = contentId(params.id);
@@ -114,7 +114,7 @@ export const PATCH: APIRoute = async ({ request, params }) => {
 
 /** DELETE /api/admin/contents/:id — xoa vinh vien khoi DB (+ media R2 local). */
 export const DELETE: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const id = contentId(params.id);

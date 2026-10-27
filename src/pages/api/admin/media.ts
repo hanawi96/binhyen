@@ -19,7 +19,7 @@ export const prerender = false;
  * multipart: file + kind=image|video|audio
  */
 export const POST: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.MEDIA) {

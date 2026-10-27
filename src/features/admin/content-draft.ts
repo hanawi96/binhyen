@@ -4,6 +4,7 @@ import {
   parseImageSize
 } from "../content/content-media";
 import {
+  contentFormats,
   contentKinds,
   type ContentFormat,
   type ContentKind,
@@ -49,7 +50,7 @@ export type AdminSort = "updated" | "created";
 export interface AdminListQuery {
   status: "all" | ContentStatus;
   q: string;
-  kind: ContentKind | "";
+  format: ContentFormat | "";
   topic: string;
   sort: AdminSort;
   review: boolean;
@@ -371,7 +372,7 @@ export function decodeAdminCursor(
 export function parseAdminListQuery(params: {
   status: string | null;
   q: string | null;
-  kind: string | null;
+  format: string | null;
   topic: string | null;
   sort: string | null;
   review: string | null;
@@ -397,13 +398,13 @@ export function parseAdminListQuery(params: {
     return { ok: false, error: "Từ tìm kiếm quá dài." };
   }
 
-  const kindValue = params.kind ?? "";
-  const kind = kindValue
-    ? oneOf(kindValue, contentKinds)
+  const formatValue = params.format ?? "";
+  const format = formatValue
+    ? oneOf(formatValue, contentFormats)
     : "";
 
-  if (kind === null) {
-    return { ok: false, error: "Loại nội dung không hợp lệ." };
+  if (format === null) {
+    return { ok: false, error: "Dạng nội dung không hợp lệ." };
   }
 
   const topicValue = params.topic ?? "";
@@ -452,7 +453,7 @@ export function parseAdminListQuery(params: {
     value: {
       status,
       q,
-      kind,
+      format,
       topic,
       sort,
       review: params.review === "1",

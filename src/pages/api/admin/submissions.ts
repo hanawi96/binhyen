@@ -19,7 +19,7 @@ const PAGE_SIZE = 10;
  * Bai nguoi dung gui. Trang dau kem so dem cua ca ba trang thai.
  */
 export const GET: APIRoute = async ({ request, url }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const status = url.searchParams.get("status") ?? "draft";

@@ -1,10 +1,10 @@
 import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
 
-import { readActorId } from "../../../../features/actor/actor";
 import { parseReactionRequest } from "../../../../features/interactions/content-reactions";
 import { createD1ReactionStore } from "../../../../features/interactions/d1-reaction-store";
 import {
+  actorForRead,
   actorForWrite,
   checkWriteLimit,
   interactionJson,
@@ -18,7 +18,7 @@ export const prerender = false;
 
 /**
  * GET /api/contents/:id/reactions
- * Trang thai thich / luu cua trinh duyet nay. Khong tao cookie.
+ * Trang thai thich / luu — theo tai khoan neu dang nhap.
  */
 export const GET: APIRoute = async ({ request, params }) => {
   if (!validContentId(params.id)) {
@@ -26,16 +26,18 @@ export const GET: APIRoute = async ({ request, params }) => {
   }
 
   try {
+    const now = Math.floor(Date.now() / 1000);
+    const actor = await actorForRead(env.DB, request, now);
     const state = await createD1ReactionStore(env.DB).read(
       params.id,
-      readActorId(request.headers.get("cookie"))
+      actor.id
     );
 
     if (!state) {
       return interactionJson({ success: false, error: "Not found" }, 404);
     }
 
-    return interactionJson({ success: true, ...state });
+    return interactionJson({ success: true, ...state }, 200, actor.setCookie);
   } catch (error) {
     console.error("Reaction read error:", error);
     return interactionJson(

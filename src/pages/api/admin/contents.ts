@@ -19,7 +19,7 @@ function nowSeconds(): number {
 }
 
 export const GET: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const url = new URL(request.url);
@@ -41,7 +41,7 @@ export const GET: APIRoute = async ({ request }) => {
   const query = parseAdminListQuery({
     status: url.searchParams.get("status"),
     q: url.searchParams.get("q"),
-    kind: url.searchParams.get("kind"),
+    format: url.searchParams.get("format"),
     topic: url.searchParams.get("topic"),
     sort: url.searchParams.get("sort"),
     review: url.searchParams.get("review"),
@@ -58,8 +58,20 @@ export const GET: APIRoute = async ({ request }) => {
 
   try {
     const withCatalog = url.searchParams.get("catalog") !== "0";
+    // Trang sau (có cursor): bỏ COUNT + stats — client giữ số cũ.
+    const paging = Boolean(query.value.cursor);
+    const includeTotal =
+      url.searchParams.get("counts") === "1" ||
+      (!paging && url.searchParams.get("counts") !== "0");
+    const includeStats =
+      url.searchParams.get("stats") === "1" ||
+      (!paging && url.searchParams.get("stats") !== "0");
+
     const [page, catalog] = await Promise.all([
-      listAdminContents(env.DB, query.value),
+      listAdminContents(env.DB, query.value, {
+        includeTotal,
+        includeStats
+      }),
       withCatalog
         ? loadAdminCatalog(env.DB)
         : Promise.resolve({ topics: [], moods: [] })
@@ -70,8 +82,8 @@ export const GET: APIRoute = async ({ request }) => {
         success: true,
         items: page.items,
         nextCursor: page.nextCursor,
-        total: page.total,
-        stats: page.stats,
+        ...(page.total !== null ? { total: page.total } : {}),
+        ...(page.stats ? { stats: page.stats } : {}),
         topics: catalog.topics,
         moods: catalog.moods
       },
@@ -83,7 +95,7 @@ export const GET: APIRoute = async ({ request }) => {
 };
 
 export const POST: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const body = await readJsonBody(request);

@@ -152,8 +152,21 @@ function applyTrack(track: AmbientTrack): void {
   node.load();
 }
 
+let unlockPointer: (() => void) | null = null;
+let unlockKey: (() => void) | null = null;
+
 function disarmUnlock(): void {
   unlockArmed = false;
+  if (typeof document !== "undefined") {
+    if (unlockPointer) {
+      document.removeEventListener("pointerdown", unlockPointer, true);
+      unlockPointer = null;
+    }
+    if (unlockKey) {
+      document.removeEventListener("keydown", unlockKey, true);
+      unlockKey = null;
+    }
+  }
 }
 
 function armUnlock(): void {
@@ -164,8 +177,6 @@ function armUnlock(): void {
   const unlock = () => {
     if (!unlockArmed) return;
     disarmUnlock();
-    document.removeEventListener("pointerdown", unlock, true);
-    document.removeEventListener("keydown", unlock, true);
     // Khong goi tryPlay trong cung gesture tat nhac — chi khi van dang bat.
     if (prefs.enabled && !playing) {
       queueMicrotask(() => {
@@ -176,6 +187,8 @@ function armUnlock(): void {
     }
   };
 
+  unlockPointer = unlock;
+  unlockKey = unlock;
   document.addEventListener("pointerdown", unlock, true);
   document.addEventListener("keydown", unlock, true);
 }
@@ -348,6 +361,8 @@ let deferredStart: number | null = null;
 let deferredIdle: number | null = null;
 
 async function startAmbientAfterIdle(): Promise<void> {
+  // Mac dinh tat: khong fetch catalog / khong tao Audio — tranh tranh mang voi feed.
+  if (!prefs.enabled) return;
   await loadRemoteCatalog();
   notify();
   if (prefs.enabled) {
@@ -420,12 +435,12 @@ export async function setAmbientEnabled(on: boolean): Promise<void> {
     return;
   }
 
+  // UI doi ngay; catalog/audio co the cham hon.
   prefs = { ...prefs, enabled: true };
   persist();
+  notify();
 
-  if (!catalogReady) {
-    await loadRemoteCatalog();
-  }
+  await ensureAmbientReady();
   if (!prefs.enabled) return;
   await tryPlay();
 }
@@ -445,11 +460,8 @@ export async function setAmbientTrack(trackId: string): Promise<void> {
 
   prefs = { ...prefs, trackId: track.id };
   persist();
+  notify();
 
-  if (!prefs.enabled) {
-    notify();
-    return;
-  }
-
+  if (!prefs.enabled) return;
   await tryPlay();
 }

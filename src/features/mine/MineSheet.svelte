@@ -705,6 +705,8 @@
                   <button
                     type="button"
                     class="mine-icon mine-on"
+                    class:mine-like={kind === "like"}
+                    class:mine-save={kind === "save"}
                     aria-label={kind === "like" ? "Bỏ thích" : "Bỏ lưu"}
                     onclick={() => onSetReaction(item, kind, false)}
                   >
@@ -891,6 +893,14 @@
 
   .mine-on svg {
     fill: currentColor;
+  }
+
+  .mine-on.mine-like {
+    color: #e85d6c;
+  }
+
+  .mine-on.mine-save {
+    color: #e0b035;
   }
 
   .mine-tabs {

@@ -9,7 +9,9 @@
       | "submissions"
       | "catalog"
       | "ambient"
-      | "collections";
+      | "collections"
+      | "admins"
+      | "users";
     onleave: () => void;
     pending?: number;
     children: Snippet;

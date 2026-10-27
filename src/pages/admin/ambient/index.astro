@@ -3,13 +3,13 @@ export const prerender = false;
 
 import { env } from "cloudflare:workers";
 
-import { hasAdminSession } from "../../../features/admin/admin-auth";
 import AdminAmbient from "../../../features/admin/AdminAmbient.svelte";
+import { hasAdminAccess } from "../../../features/admin/require-admin";
 import { listAmbientTracks } from "../../../features/ambient/d1-ambient-tracks";
 import { countSubmissions } from "../../../features/moderation/d1-submissions";
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 
-if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+if (!(await hasAdminAccess(Astro.request.headers.get("cookie")))) {
   return Astro.redirect("/admin/login");
 }
 

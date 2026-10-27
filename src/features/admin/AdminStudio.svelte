@@ -11,11 +11,12 @@
     ReviewReason
   } from "./d1-admin-content";
   import {
+    contentFormats,
     contentKinds,
+    isContentFormat,
     isContentKind,
     isContentTheme,
     type ContentFormat,
-    type ContentKind,
     type ContentStatus
   } from "../content/content.types";
   import { readContentFormat } from "../content/content-format";
@@ -30,19 +31,9 @@
 
   const PAGE_SIZE = 12;
 
-  const kindLabels: Record<ContentKind, string> = {
-    quote: "Châm ngôn",
-    story: "Câu chuyện",
-    fact: "Kiến thức",
-    psychology: "Tâm lý học",
-    insight: "Góc nhìn",
-    cute: "Điều dễ thương",
-    tip: "Mẹo hữu ích"
-  };
-
   const formatLabels: Record<ContentFormat, string> = {
     text: "Bài viết",
-    image: "Ảnh",
+    image: "Hình ảnh",
     video: "Video",
     poll: "Khảo sát",
     prompt: "Câu hỏi",
@@ -132,7 +123,7 @@
 
   let query = $state("");
   let statusFilter = $state<"all" | ContentStatus>("all");
-  let kindFilter = $state<ContentKind | "">("");
+  let formatFilter = $state<ContentFormat | "">("");
   let topicFilter = $state("");
   let sort = $state<"updated" | "created">("updated");
   let reviewOnly = $state(false);
@@ -582,7 +573,8 @@
       : [];
     nextCursor =
       typeof row?.nextCursor === "string" ? row.nextCursor : null;
-    total = typeof row?.total === "number" ? row.total : 0;
+    // Giữ total/stats cũ khi API bỏ counts/stats (sang trang).
+    if (typeof row?.total === "number") total = row.total;
     storeNext(nextCursor);
 
     const nextStats = readStats(row?.stats);
@@ -604,7 +596,7 @@
     params.set("sort", sort);
 
     if (statusFilter !== "all") params.set("status", statusFilter);
-    if (kindFilter) params.set("kind", kindFilter);
+    if (formatFilter) params.set("format", formatFilter);
     if (topicFilter) params.set("topic", topicFilter);
     if (reviewOnly) params.set("review", "1");
 
@@ -612,7 +604,11 @@
     if (term) params.set("q", term);
 
     const cursor = pageCursors[pageIndex];
-    if (cursor) params.set("cursor", cursor);
+    if (cursor) {
+      params.set("cursor", cursor);
+      params.set("counts", "0");
+      params.set("stats", "0");
+    }
 
     try {
       const { response, body } = await requestJson(
@@ -706,7 +702,7 @@
     cancelSearch();
     reviewOnly = true;
     statusFilter = "all";
-    kindFilter = "";
+    formatFilter = "";
     topicFilter = "";
     query = "";
     sort = "updated";
@@ -714,13 +710,13 @@
     void loadList();
   }
 
-  function chooseKind(event: Event) {
+  function chooseFormat(event: Event) {
     cancelSearch();
     const target = event.currentTarget;
     if (!(target instanceof HTMLSelectElement)) return;
     const next = target.value;
-    if (next !== "" && !isContentKind(next)) return;
-    kindFilter = next;
+    if (next !== "" && !isContentFormat(next)) return;
+    formatFilter = next;
     resetPages();
     void loadList();
   }
@@ -1375,7 +1371,7 @@
           <button
             type="button"
             class="filter-toggle"
-            class:is-active={kindFilter !== "" ||
+            class:is-active={formatFilter !== "" ||
               topicFilter !== "" ||
               sort !== "updated"}
             aria-expanded={filtersOpen}
@@ -1390,11 +1386,11 @@
             class:is-open={filtersOpen}
           >
             <label>
-              <span class="visually-hidden">Loại nội dung</span>
-              <select value={kindFilter} onchange={chooseKind}>
-                <option value="">Mọi loại</option>
-                {#each contentKinds as kind (kind)}
-                  <option value={kind}>{kindLabels[kind]}</option>
+              <span class="visually-hidden">Dạng nội dung</span>
+              <select value={formatFilter} onchange={chooseFormat}>
+                <option value="">Mọi dạng</option>
+                {#each contentFormats as format (format)}
+                  <option value={format}>{formatLabels[format]}</option>
                 {/each}
               </select>
             </label>
@@ -1454,11 +1450,15 @@
                   <p class="excerpt">{item.description}</p>
                 {/if}
                 <div class="content-meta">
-                  <span class:topic-missing={item.topics.length === 0}>
-                    {item.topics.length
-                      ? item.topics.map(topicLabel).join(" · ")
-                      : "Chưa có chủ đề"}
-                  </span>
+                  <div class="topic-badges">
+                    {#if item.topics.length === 0}
+                      <span class="topic-badge is-missing">Chưa có chủ đề</span>
+                    {:else}
+                      {#each item.topics as topic (topic)}
+                        <span class="topic-badge">{topicLabel(topic)}</span>
+                      {/each}
+                    {/if}
+                  </div>
                   <time
                     datetime={new Date(
                       (sort === "created" ? item.createdAt : item.updatedAt) *
@@ -2611,13 +2611,31 @@
     font-size: var(--text-sm);
   }
 
-  .content-meta span.topic-missing {
-    color: #d4b44a;
-    font-weight: 600;
+  .topic-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    min-width: 0;
   }
 
-  .content-meta span {
-    min-width: 0;
+  .topic-badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .topic-badge.is-missing {
+    border-color: color-mix(in srgb, #d4b44a 45%, var(--color-border));
+    color: #d4b44a;
   }
 
   .content-meta time {

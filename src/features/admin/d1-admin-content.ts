@@ -96,10 +96,15 @@ interface ListRow {
   kind: string;
   theme: string;
   status: string;
-  topics_csv: string | null;
-  review_marks: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface ListAdminOptions {
+  /** Đếm kết quả theo filter. Tắt khi sang trang kế (giữ total client). */
+  includeTotal?: boolean;
+  /** Stats tổng quan. Tắt khi sang trang kế (giữ stats client). */
+  includeStats?: boolean;
 }
 
 interface DetailRow {
@@ -213,20 +218,73 @@ const reviewPredicate = `NOT EXISTS (
   WHERE review_topic.content_id = c.id
 )`;
 
-const reviewMarks = `TRIM(
-  CASE
-    WHEN NOT EXISTS (
-      SELECT 1
-      FROM content_topics review_topic
-      WHERE review_topic.content_id = c.id
-    )
-    THEN 'topic '
-    ELSE ''
-  END
-)`;
-
 function orderColumn(sort: AdminListQuery["sort"]): string {
   return sort === "created" ? "c.created_at" : "c.updated_at";
+}
+
+async function loadTopicsForContents(
+  db: D1Database,
+  ids: string[]
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (ids.length === 0) return map;
+
+  const placeholders = ids.map((_, index) => `?${index + 1}`).join(", ");
+  const rows = await db
+    .prepare(
+      `SELECT content_id, topic_slug
+       FROM content_topics
+       WHERE content_id IN (${placeholders})`
+    )
+    .bind(...ids)
+    .all<{ content_id: string; topic_slug: string }>();
+
+  for (const row of rows.results ?? []) {
+    if (!isCatalogSlug(row.topic_slug)) continue;
+    const list = map.get(row.content_id);
+    if (list) list.push(row.topic_slug);
+    else map.set(row.content_id, [row.topic_slug]);
+  }
+
+  return map;
+}
+
+async function loadAdminStats(db: D1Database): Promise<AdminStats> {
+  const [base, review] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), 0)
+             AS published,
+           COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0)
+             AS drafts
+         FROM contents`
+      )
+      .first<{
+        total: number;
+        published: number;
+        drafts: number;
+      }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS review
+         FROM contents c
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM content_topics t
+           WHERE t.content_id = c.id
+         )`
+      )
+      .first<{ review: number }>()
+  ]);
+
+  return {
+    total: asCount(base?.total),
+    published: asCount(base?.published),
+    drafts: asCount(base?.drafts),
+    review: asCount(review?.review)
+  };
 }
 
 function filterSql(): string {
@@ -236,7 +294,7 @@ function filterSql(): string {
       OR c.title LIKE ?3 ESCAPE '\\'
       OR c.description LIKE ?3 ESCAPE '\\'
     )
-    AND (?4 = '' OR c.kind = ?4)
+    AND (?4 = '' OR c.format = ?4)
     AND (
       ?5 = ''
       OR EXISTS (
@@ -251,11 +309,11 @@ function filterSql(): string {
 
 function filterBindings(query: AdminListQuery): Array<string | number> {
   return [
-    query.status,
-    query.q,
+    query.status ?? "all",
+    query.q ?? "",
     query.q ? likeContains(query.q) : "",
-    query.kind,
-    query.topic,
+    query.format ?? "",
+    query.topic ?? "",
     query.review ? 1 : 0
   ];
 }
@@ -265,96 +323,72 @@ function asCount(value: unknown): number {
   return Number.isFinite(count) ? count : 0;
 }
 
-function reviewReasonsFrom(marks: string | null): ReviewReason[] {
-  if (!marks) return [];
-
-  const reasons: ReviewReason[] = [];
-
-  for (const part of marks.split(" ")) {
-    if (part === "topic" && !reasons.includes(part)) {
-      reasons.push(part);
-    }
-  }
-
-  return reasons;
-}
-
 export async function listAdminContents(
   db: D1Database,
-  query: AdminListQuery
+  query: AdminListQuery,
+  options: ListAdminOptions = {}
 ): Promise<{
   items: AdminListItem[];
   nextCursor: string | null;
-  total: number;
-  stats: AdminStats;
+  total: number | null;
+  stats: AdminStats | null;
 }> {
+  const includeTotal = options.includeTotal ?? true;
+  const includeStats = options.includeStats ?? true;
   const column = orderColumn(query.sort);
   const cursorAt = query.cursor?.at ?? -1;
   const cursorId = query.cursor?.id ?? "";
-  const [page, totalRow, statsRow] = await Promise.all([
-    db
-      .prepare(
-        `SELECT
-           c.id, c.title, c.description, c.category, c.format, c.kind, c.theme,
-           c.status, c.created_at, c.updated_at,
-           (
-             SELECT group_concat(ct.topic_slug, ',')
-             FROM content_topics ct
-             WHERE ct.content_id = c.id
-           ) AS topics_csv,
-           ${reviewMarks} AS review_marks
-         FROM contents c
-         ${filterSql()}
-           AND (
-             ?7 < 0
-             OR ${column} < ?7
-             OR (${column} = ?7 AND c.id < ?8)
-           )
-         ORDER BY ${column} DESC, c.id DESC
-         LIMIT ?9`
-      )
-      .bind(
-        ...filterBindings(query),
-        cursorAt,
-        cursorId,
-        query.limit + 1
-      )
-      .all<ListRow>(),
-    db
-      .prepare(
-        `SELECT COUNT(*) AS n
-         FROM contents c
-         ${filterSql()}`
-      )
-      .bind(...filterBindings(query))
-      .first<{ n: number }>(),
-    db
-      .prepare(
-        `SELECT
-           COUNT(*) AS total,
-           COALESCE(SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), 0) AS published,
-           COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS drafts,
-           COALESCE(SUM(CASE
-             WHEN NOT EXISTS (
-               SELECT 1
-               FROM content_topics review_topic
-               WHERE review_topic.content_id = contents.id
-             )
-             THEN 1
-             ELSE 0
-           END), 0) AS review
-         FROM contents`
-      )
-      .first<{
-        total: number;
-        published: number;
-        drafts: number;
-        review: number;
-      }>()
+
+  const pagePromise = db
+    .prepare(
+      `SELECT
+         c.id, c.title, c.description, c.category, c.format, c.kind, c.theme,
+         c.status, c.created_at, c.updated_at
+       FROM contents c
+       ${filterSql()}
+         AND (
+           ?7 < 0
+           OR ${column} < ?7
+           OR (${column} = ?7 AND c.id < ?8)
+         )
+       ORDER BY ${column} DESC, c.id DESC
+       LIMIT ?9`
+    )
+    .bind(
+      ...filterBindings(query),
+      cursorAt,
+      cursorId,
+      query.limit + 1
+    )
+    .all<ListRow>();
+
+  const totalPromise = includeTotal
+    ? db
+        .prepare(
+          `SELECT COUNT(*) AS n
+           FROM contents c
+           ${filterSql()}`
+        )
+        .bind(...filterBindings(query))
+        .first<{ n: number }>()
+    : Promise.resolve(null);
+
+  const statsPromise = includeStats
+    ? loadAdminStats(db)
+    : Promise.resolve(null);
+
+  const [page, totalRow, stats] = await Promise.all([
+    pagePromise,
+    totalPromise,
+    statsPromise
   ]);
 
   const rows = page.results ?? [];
   const visible = rows.slice(0, query.limit);
+  const topicsById = await loadTopicsForContents(
+    db,
+    visible.map((row) => row.id)
+  );
   const items: AdminListItem[] = [];
 
   for (const row of visible) {
@@ -368,6 +402,8 @@ export async function listAdminContents(
 
     if (!kind || !theme || !status) continue;
 
+    const topics = topicsById.get(row.id) ?? [];
+
     items.push({
       id: row.id,
       title: row.title,
@@ -377,8 +413,8 @@ export async function listAdminContents(
       kind,
       theme,
       status,
-      topics: splitCatalogSlugs(row.topics_csv),
-      reviewReasons: reviewReasonsFrom(row.review_marks),
+      topics,
+      reviewReasons: topics.length === 0 ? ["topic"] : [],
       createdAt: row.created_at,
       updatedAt: row.updated_at
     });
@@ -397,13 +433,8 @@ export async function listAdminContents(
   return {
     items,
     nextCursor,
-    total: asCount(totalRow?.n),
-    stats: {
-      total: asCount(statsRow?.total),
-      published: asCount(statsRow?.published),
-      drafts: asCount(statsRow?.drafts),
-      review: asCount(statsRow?.review)
-    }
+    total: includeTotal ? asCount(totalRow?.n) : null,
+    stats
   };
 }
 

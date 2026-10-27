@@ -3303,6 +3303,7 @@
             type="button"
             class="read-icon"
             class:active={view.saved}
+            data-rail-save
             aria-label="Lưu"
             aria-pressed={view.saved}
             onclick={() => toggleReaction("save")}
@@ -3348,6 +3349,7 @@
             type="button"
             class="read-icon"
             class:active={railView?.liked ?? false}
+            data-rail-like
             aria-label="Yêu thích"
             aria-pressed={railView?.liked ?? false}
             onclick={(event) => toggleReaction("like", event)}
@@ -3363,6 +3365,7 @@
             type="button"
             class="read-icon"
             class:active={railView?.saved ?? false}
+            data-rail-save
             aria-label="Lưu"
             aria-pressed={railView?.saved ?? false}
             onclick={() => toggleReaction("save")}
@@ -4700,6 +4703,28 @@
 
   .read-icon.active:not(.read-share) svg {
     fill: currentColor;
+  }
+
+  /* Tim da thich — hong. */
+  .read-icon.active[data-rail-like] {
+    border-color: #e85d6c;
+    color: #e85d6c;
+  }
+
+  .read-icon.active[data-rail-like] svg {
+    fill: #e85d6c;
+    stroke: #e85d6c;
+  }
+
+  /* Da luu — vang. */
+  .read-icon.active[data-rail-save] {
+    border-color: #e0b035;
+    color: #e0b035;
+  }
+
+  .read-icon.active[data-rail-save] svg {
+    fill: #e0b035;
+    stroke: #e0b035;
   }
 
   .read-icon svg {

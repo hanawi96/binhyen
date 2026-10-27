@@ -1,9 +1,11 @@
 import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
 
-import { readActorId } from "../../../features/actor/actor";
 import { createD1MyReactionStore } from "../../../features/interactions/d1-my-reactions";
-import { interactionJson } from "../../../features/interactions/interaction-http";
+import {
+  actorForRead,
+  interactionJson
+} from "../../../features/interactions/interaction-http";
 import {
   decodeMyCursor,
   parseMyKind,
@@ -14,8 +16,8 @@ export const prerender = false;
 
 /**
  * GET /api/me/reactions?kind=like|save&cursor=&limit=
- * Bai da thich / da luu cua trinh duyet nay, moi nhat truoc.
- * Trang dau kem so dem cua ca hai tab. Khong tao cookie.
+ * Bai da thich / da luu — theo tai khoan neu dang nhap, khong thi cookie.
+ * Trang dau kem so dem cua ca hai tab.
  */
 export const GET: APIRoute = async ({ request, url }) => {
   const kind = parseMyKind(url.searchParams.get("kind"));
@@ -26,9 +28,10 @@ export const GET: APIRoute = async ({ request, url }) => {
     return interactionJson({ success: false, error: "Invalid request" }, 400);
   }
 
-  const actorId = readActorId(request.headers.get("cookie"));
+  const now = Math.floor(Date.now() / 1000);
+  const actor = await actorForRead(env.DB, request, now);
 
-  if (!actorId) {
+  if (!actor.id) {
     return interactionJson({
       success: true,
       items: [],
@@ -41,15 +44,19 @@ export const GET: APIRoute = async ({ request, url }) => {
     const store = createD1MyReactionStore(env.DB);
     const limit = parseMyLimit(url.searchParams.get("limit"));
     const [page, counts] = await Promise.all([
-      store.page(actorId, kind, cursor, limit),
-      cursor ? Promise.resolve(null) : store.counts(actorId)
+      store.page(actor.id, kind, cursor, limit),
+      cursor ? Promise.resolve(null) : store.counts(actor.id)
     ]);
 
-    return interactionJson({
-      success: true,
-      ...page,
-      ...(counts ? { counts } : {})
-    });
+    return interactionJson(
+      {
+        success: true,
+        ...page,
+        ...(counts ? { counts } : {})
+      },
+      200,
+      actor.setCookie
+    );
   } catch (error) {
     console.error("My reactions error:", error);
     return interactionJson(

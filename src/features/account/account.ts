@@ -11,6 +11,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 200;
 
+export type UserStatus = "active" | "disabled";
+
 export interface PublicUser {
   id: string;
   email: string;
@@ -19,6 +21,7 @@ export interface PublicUser {
 
 export interface UserRecord extends PublicUser {
   passwordHash: string;
+  status: UserStatus;
 }
 
 export interface AccountStore {
@@ -200,7 +203,11 @@ export async function register(
 
   const user: PublicUser = { id: crypto.randomUUID(), email, displayName };
   const created = await store.createUser(
-    { ...user, passwordHash: await hashPassword(password) },
+    {
+      ...user,
+      passwordHash: await hashPassword(password),
+      status: "active"
+    },
     now
   );
 
@@ -230,6 +237,7 @@ export async function login(
     : await verifyDecoy(password);
 
   if (!record || !matches) return { ok: false, reason: "wrong" };
+  if (record.status === "disabled") return { ok: false, reason: "wrong" };
 
   const user: PublicUser = {
     id: record.id,

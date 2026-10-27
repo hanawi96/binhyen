@@ -1,14 +1,9 @@
 ---
 export const prerender = false;
 
-import { env } from "cloudflare:workers";
+import { hasAdminAccess } from "../../features/admin/require-admin";
 
-import { hasAdminSession } from "../../features/admin/admin-auth";
-
-const destination = hasAdminSession(
-  Astro.request.headers.get("cookie"),
-  env.ADMIN_TOKEN
-)
+const destination = (await hasAdminAccess(Astro.request.headers.get("cookie")))
   ? "/admin/contents"
   : "/admin/login";
 

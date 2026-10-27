@@ -19,7 +19,7 @@ export const prerender = false;
 
 /** GET /api/admin/ambient/tracks */
 export const GET: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {
@@ -43,7 +43,7 @@ export const GET: APIRoute = async ({ request }) => {
  * multipart: file + title + makeDefault?=1
  */
 export const POST: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {

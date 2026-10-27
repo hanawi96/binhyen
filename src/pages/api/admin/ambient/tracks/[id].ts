@@ -27,7 +27,7 @@ function readId(params: { id?: string | string[] }): string | null {
 
 /** PATCH /api/admin/ambient/tracks/:id — { title? } | { makeDefault: true } */
 export const PATCH: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {
@@ -83,7 +83,7 @@ export const PATCH: APIRoute = async ({ request, params }) => {
 
 /** DELETE /api/admin/ambient/tracks/:id */
 export const DELETE: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {

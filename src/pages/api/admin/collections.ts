@@ -14,7 +14,7 @@ export const prerender = false;
 
 /** GET /api/admin/collections */
 export const GET: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {
@@ -35,7 +35,7 @@ export const GET: APIRoute = async ({ request }) => {
 
 /** POST /api/admin/collections */
 export const POST: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!env.DB) {

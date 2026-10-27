@@ -1,13 +1,11 @@
 ---
 export const prerender = false;
 
-import { env } from "cloudflare:workers";
-
-import { hasAdminSession } from "../../features/admin/admin-auth";
+import { hasAdminAccess } from "../../features/admin/require-admin";
 import AdminLogin from "../../features/admin/AdminLogin.svelte";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 
-if (hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+if (await hasAdminAccess(Astro.request.headers.get("cookie"))) {
   return Astro.redirect("/admin/contents");
 }
 

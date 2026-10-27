@@ -1,0 +1,40 @@
+---
+export const prerender = false;
+
+import { env } from "cloudflare:workers";
+
+import AdminUsers from "../../../features/admin/AdminUsers.svelte";
+import { listAdminUsers } from "../../../features/admin/d1-admin-users";
+import { hasAdminAccess } from "../../../features/admin/require-admin";
+import { countSubmissions } from "../../../features/moderation/d1-submissions";
+import BaseLayout from "../../../layouts/BaseLayout.astro";
+
+if (!(await hasAdminAccess(Astro.request.headers.get("cookie")))) {
+  return Astro.redirect("/admin/login");
+}
+
+const [page, submissions] = await Promise.all([
+  listAdminUsers(
+    env.DB,
+    { q: "", status: "all", cursor: null, limit: 12 },
+    { includeTotal: true }
+  ),
+  countSubmissions(env.DB)
+]);
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex");
+---
+
+<BaseLayout
+  title="Người dùng · Bình Yên"
+  description="Quản lý tài khoản người dùng sản phẩm."
+>
+  <AdminUsers
+    client:load
+    initialItems={page.items}
+    initialCursor={page.nextCursor}
+    initialTotal={page.total ?? 0}
+    pending={submissions.draft}
+  />
+</BaseLayout>

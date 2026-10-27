@@ -278,7 +278,7 @@ describe("Content draft", () => {
     const query = parseAdminListQuery({
       status: "published",
       q: "bình",
-      kind: "quote",
+      format: "quote",
       topic: "peace",
       sort: "updated",
       review: "1",
@@ -291,7 +291,7 @@ describe("Content draft", () => {
       value: {
         status: "published",
         q: "bình",
-        kind: "quote",
+        format: "quote",
         topic: "peace",
         sort: "updated",
         review: true,
@@ -303,7 +303,7 @@ describe("Content draft", () => {
       parseAdminListQuery({
         status: "all",
         q: null,
-        kind: "song",
+        format: "song",
         topic: null,
         sort: "created",
         review: null,

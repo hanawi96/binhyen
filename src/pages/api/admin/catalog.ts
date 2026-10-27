@@ -15,7 +15,7 @@ import { requireAdmin } from "../../../features/admin/require-admin";
 export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const body = await readJsonBody(request, 1000);
@@ -49,7 +49,7 @@ export const POST: APIRoute = async ({ request }) => {
 };
 
 export const PATCH: APIRoute = async ({ request }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   const body = await readJsonBody(request, 1000);

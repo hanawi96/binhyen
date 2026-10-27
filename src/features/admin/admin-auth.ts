@@ -35,13 +35,15 @@ export function hasAdminSession(
 
 export function adminSessionCookie(
   token: string,
-  secure: boolean
+  secure: boolean,
+  maxAgeSeconds = 60 * 60 * 24 * 14
 ): string {
   const parts = [
     `${ADMIN_COOKIE}=${encodeURIComponent(token)}`,
     "HttpOnly",
     "Path=/",
-    "SameSite=Strict"
+    "SameSite=Strict",
+    `Max-Age=${maxAgeSeconds}`
   ];
 
   if (secure) parts.push("Secure");

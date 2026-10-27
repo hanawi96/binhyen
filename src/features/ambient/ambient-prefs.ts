@@ -12,7 +12,7 @@ export interface AmbientPrefs {
 }
 
 export const DEFAULT_AMBIENT_PREFS: AmbientPrefs = {
-  enabled: true,
+  enabled: false,
   volume: 0.35,
   trackId: DEFAULT_AMBIENT_TRACK_ID
 };

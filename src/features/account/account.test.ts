@@ -48,6 +48,7 @@ function memoryStore(): MemoryStore {
       if (!session || session.expiresAt <= now) return null;
 
       const user = users.find((item) => item.id === session.userId);
+      if (!user || user.status === "disabled") return null;
       return user
         ? { id: user.id, email: user.email, displayName: user.displayName }
         : null;
@@ -187,6 +188,23 @@ describe("register and login", () => {
     ).toEqual({ ok: false, reason: "wrong" });
     expect(
       await login(store, { email: "ai@example.com", password: "mat-khau-8" }, null, 200)
+    ).toEqual({ ok: false, reason: "wrong" });
+  });
+
+  it("rejects disabled accounts like a wrong password", async () => {
+    const store = memoryStore();
+    await register(store, input, null, 100, () => "P".repeat(22));
+    const user = store.users[0];
+    if (!user) throw new Error("expected user");
+    user.status = "disabled";
+
+    expect(
+      await login(
+        store,
+        { email: "lan@example.com", password: "mat-khau-8" },
+        null,
+        200
+      )
     ).toEqual({ ok: false, reason: "wrong" });
   });
 

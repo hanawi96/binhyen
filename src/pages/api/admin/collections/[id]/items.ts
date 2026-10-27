@@ -19,7 +19,7 @@ export const prerender = false;
  * Body: { contentIds: string[] } — thu tu = mang.
  */
 export const PUT: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (typeof params.id !== "string" || !CONTENT_ID_PATTERN.test(params.id)) {

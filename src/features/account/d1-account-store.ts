@@ -1,3 +1,4 @@
+import { rebuildActorReactionCounts } from "../interactions/actor-reaction-counts";
 import type { AccountStore, PublicUser, UserRecord } from "./account";
 
 interface UserRow {
@@ -5,6 +6,7 @@ interface UserRow {
   email: string;
   display_name: string;
   password_hash: string;
+  status: string;
 }
 
 const UNCLAIMED = `EXISTS (
@@ -32,32 +34,42 @@ export function createD1AccountStore(db: D1Database): AccountStore {
     async findUserByEmail(email): Promise<UserRecord | null> {
       const row = await db
         .prepare(
-          `SELECT id, email, display_name, password_hash
+          `SELECT id, email, display_name, password_hash, status
            FROM users
            WHERE email = ?1`
         )
         .bind(email)
         .first<UserRow>();
 
-      return row
-        ? {
-            id: row.id,
-            email: row.email,
-            displayName: row.display_name,
-            passwordHash: row.password_hash
-          }
-        : null;
+      if (!row) return null;
+      const status = row.status === "disabled" ? "disabled" : "active";
+
+      return {
+        id: row.id,
+        email: row.email,
+        displayName: row.display_name,
+        passwordHash: row.password_hash,
+        status
+      };
     },
 
     async createUser(user, now) {
       const result = await db
         .prepare(
           `INSERT INTO users
-             (id, email, display_name, password_hash, created_at, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+             (id, email, display_name, password_hash, status,
+              created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
            ON CONFLICT (email) DO NOTHING`
         )
-        .bind(user.id, user.email, user.displayName, user.passwordHash, now)
+        .bind(
+          user.id,
+          user.email,
+          user.displayName,
+          user.passwordHash,
+          user.status ?? "active",
+          now
+        )
         .run();
 
       return result.meta.changes > 0;
@@ -84,10 +96,12 @@ export function createD1AccountStore(db: D1Database): AccountStore {
     async findSessionUser(tokenHash, now): Promise<PublicUser | null> {
       const row = await db
         .prepare(
-          `SELECT u.id, u.email, u.display_name
+          `SELECT u.id, u.email, u.display_name, u.status
            FROM user_sessions s
            JOIN users u ON u.id = s.user_id
-           WHERE s.token_hash = ?1 AND s.expires_at > ?2`
+           WHERE s.token_hash = ?1
+             AND s.expires_at > ?2
+             AND u.status = 'active'`
         )
         .bind(tokenHash, now)
         .first<Omit<UserRow, "password_hash">>();
@@ -182,8 +196,15 @@ export function createD1AccountStore(db: D1Database): AccountStore {
           .bind(fromId, intoId),
         db
           .prepare(`DELETE FROM actors WHERE id = ?1 AND user_id IS NULL`)
+          .bind(fromId),
+        // Xoa dem cua ma an danh; dem ma chinh rebuild ben duoi.
+        db
+          .prepare(`DELETE FROM actor_reaction_counts WHERE actor_id = ?1`)
           .bind(fromId)
       ]);
+
+      // Dem badge "Cua toi" doc bang nay — phai khop content_reactions sau merge.
+      await rebuildActorReactionCounts(db, intoId, now);
     }
   };
 }

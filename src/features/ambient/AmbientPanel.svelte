@@ -38,9 +38,9 @@
     open = false;
   }
 
-  async function togglePower() {
-    await ensureAmbientReady();
-    await setAmbientEnabled(!snap.enabled);
+  function togglePower() {
+    // Cap nhat label ngay; load/play chay nen.
+    void setAmbientEnabled(!snap.enabled);
   }
 
   function onVolume(event: Event) {

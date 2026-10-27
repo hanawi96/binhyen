@@ -1,4 +1,5 @@
 import { isContentTheme } from "../content/content.types";
+import { countPublishedReactions } from "./actor-reaction-counts";
 import {
   encodeMyCursor,
   type MyReactionCounts,
@@ -13,11 +14,6 @@ interface ItemRow {
   description: string;
   theme: string;
   reacted_at: number;
-}
-
-interface CountRow {
-  liked: number | null;
-  saved: number | null;
 }
 
 function toItem(row: ItemRow): MyReactionItem {
@@ -79,16 +75,8 @@ export function createD1MyReactionStore(db: D1Database): MyReactionStore {
     },
 
     async counts(actorId): Promise<MyReactionCounts> {
-      const row = await db
-        .prepare(
-          `SELECT liked_count AS liked, saved_count AS saved
-           FROM actor_reaction_counts
-           WHERE actor_id = ?1`
-        )
-        .bind(actorId)
-        .first<CountRow>();
-
-      return { liked: row?.liked ?? 0, saved: row?.saved ?? 0 };
+      // Dem truc tiep tu danh sach published — khong lech sau mergeActor.
+      return countPublishedReactions(db, actorId);
     }
   };
 }

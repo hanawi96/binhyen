@@ -23,7 +23,7 @@ function validId(id: string | undefined): id is string {
 
 /** GET /api/admin/collections/:id */
 export const GET: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!validId(params.id)) {
@@ -51,7 +51,7 @@ export const GET: APIRoute = async ({ request, params }) => {
 
 /** PATCH /api/admin/collections/:id */
 export const PATCH: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!validId(params.id)) {
@@ -96,7 +96,7 @@ export const PATCH: APIRoute = async ({ request, params }) => {
 
 /** DELETE /api/admin/collections/:id */
 export const DELETE: APIRoute = async ({ request, params }) => {
-  const denied = requireAdmin(request);
+  const denied = await requireAdmin(request);
   if (denied) return denied;
 
   if (!validId(params.id)) {

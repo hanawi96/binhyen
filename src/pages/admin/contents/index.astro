@@ -3,17 +3,17 @@ export const prerender = false;
 
 import { env } from "cloudflare:workers";
 
-import { hasAdminSession } from "../../../features/admin/admin-auth";
 import {
   listAdminContents,
   loadAdminCatalog
 } from "../../../features/admin/d1-admin-content";
 import AdminStudio from "../../../features/admin/AdminStudio.svelte";
+import { hasAdminAccess } from "../../../features/admin/require-admin";
 import { listCollectionsAdmin } from "../../../features/collections/d1-collections";
 import { countSubmissions } from "../../../features/moderation/d1-submissions";
 import BaseLayout from "../../../layouts/BaseLayout.astro";
 
-if (!hasAdminSession(Astro.request.headers.get("cookie"), env.ADMIN_TOKEN)) {
+if (!(await hasAdminAccess(Astro.request.headers.get("cookie")))) {
   return Astro.redirect("/admin/login");
 }
 
@@ -21,7 +21,7 @@ const [page, catalog, submissions, collections] = await Promise.all([
   listAdminContents(env.DB, {
     status: "all",
     q: "",
-    kind: "",
+    format: "",
     topic: "",
     sort: "updated",
     review: false,
@@ -45,8 +45,13 @@ Astro.response.headers.set("X-Robots-Tag", "noindex");
     client:load
     initialItems={page.items}
     initialCursor={page.nextCursor}
-    initialTotal={page.total}
-    initialStats={page.stats}
+    initialTotal={page.total ?? 0}
+    initialStats={page.stats ?? {
+      total: 0,
+      published: 0,
+      drafts: 0,
+      review: 0
+    }}
     initialTopics={catalog.topics}
     initialMoods={catalog.moods}
     initialCollections={collections.map((item) => ({

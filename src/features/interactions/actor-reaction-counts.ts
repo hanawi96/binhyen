@@ -89,3 +89,38 @@ export async function countPublishedReactions(
     saved: Number(row?.saved) || 0
   };
 }
+
+/**
+ * Viet lai actor_reaction_counts cho mot ma tu reaction that
+ * (dung sau mergeActor / sua lech dem).
+ */
+export async function rebuildActorReactionCounts(
+  db: D1Database,
+  actorId: string,
+  now = Math.floor(Date.now() / 1000)
+): Promise<{ liked: number; saved: number }> {
+  const counts = await countPublishedReactions(db, actorId);
+
+  if (counts.liked === 0 && counts.saved === 0) {
+    await db
+      .prepare(`DELETE FROM actor_reaction_counts WHERE actor_id = ?1`)
+      .bind(actorId)
+      .run();
+    return counts;
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO actor_reaction_counts
+         (actor_id, liked_count, saved_count, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (actor_id) DO UPDATE SET
+         liked_count = excluded.liked_count,
+         saved_count = excluded.saved_count,
+         updated_at = excluded.updated_at`
+    )
+    .bind(actorId, counts.liked, counts.saved, now)
+    .run();
+
+  return counts;
+}
