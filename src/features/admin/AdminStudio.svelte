@@ -146,6 +146,7 @@
   let copiedId = $state("");
   let copyFlash = $state("");
   let copyTimer = 0;
+  let noticeTimer = 0;
   let detailLoading = $state(false);
   let saving = $state(false);
   let mediaUploading = $state(false);
@@ -155,6 +156,12 @@
   let deleteDialog = $state<HTMLDialogElement | null>(null);
   let deleting = $state(false);
   let deleteError = $state("");
+  let peekDialog = $state<HTMLDialogElement | null>(null);
+  let peekContent = $state<AdminContent | null>(null);
+  let peekLoading = $state(false);
+  let peekError = $state("");
+  let peekTicket = 0;
+  let approvingId = $state("");
   let sizeProbeTicket = 0;
   let sizeProbeTimer: ReturnType<typeof setTimeout> | undefined;
   let content = $state<AdminContent | null>(null);
@@ -163,9 +170,23 @@
   let notice = $state<{ tone: "ok" | "error"; text: string } | null>(
     null
   );
+  let importInput = $state<HTMLInputElement | null>(null);
+  let importing = $state(false);
+  let importSummary = $state<{
+    created: number;
+    failed: number;
+    results: Array<{
+      row: number;
+      ok: boolean;
+      title?: string;
+      error?: string;
+    }>;
+  } | null>(null);
   let editor = $state<HTMLDialogElement | null>(null);
   let storyImageInput = $state<HTMLInputElement | null>(null);
   let storyUrlOpen = $state(false);
+  let videoFileInput = $state<HTMLInputElement | null>(null);
+  let videoUrlOpen = $state(false);
 
   let listTicket = 0;
   let detailTicket = 0;
@@ -493,16 +514,22 @@
       }
 
       if (target === "poster") {
-        form.posterUrl = row.url;
-      } else {
-        form.imageUrl = row.url;
-        if (form.format === "text" || form.format === "image") {
-          form.format = "image";
-        }
-        sizeProbeTicket += 1;
-        if (measured) applyMeasuredSize(measured);
-        else clearMeasuredSize();
+        // Poster khong con trong UI — bo qua.
+        return;
       }
+
+      form.imageUrl = row.url;
+      form.posterUrl = "";
+      if (form.format === "text" || form.format === "image") {
+        form.format = "image";
+      }
+      if (kind === "video") {
+        form.format = "video";
+        videoUrlOpen = false;
+      }
+      sizeProbeTicket += 1;
+      if (measured) applyMeasuredSize(measured);
+      else clearMeasuredSize();
 
       notice = {
         tone: "ok",
@@ -821,6 +848,109 @@
     }
   }
 
+  async function downloadImportTemplate() {
+    try {
+      const gate = await fetch("/api/admin/contents/import-template");
+      if (gate.status === 401) return loseAccess();
+      const payload = await gate.json().catch(() => null);
+      if (!gate.ok || !payload?.success) {
+        notice = { tone: "error", text: "Không tải được file mẫu." };
+        return;
+      }
+
+      // Dong bo dropdown Excel voi catalog moi nhat tu DB.
+      const freshTopics = readCatalog(payload.topics);
+      const freshMoods = readCatalog(payload.moods);
+      if (freshTopics.length > 0) topics = freshTopics;
+      if (freshMoods.length > 0) moods = freshMoods;
+
+      const { buildImportTemplate } = await import("./content-import-xlsx");
+      const bytes = await buildImportTemplate({
+        topics: freshTopics.length > 0 ? freshTopics : topics,
+        moods: freshMoods.length > 0 ? freshMoods : moods
+      });
+      const blob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "mau-nhap-noi-dung-binh-yen.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      notice = { tone: "error", text: "Không tải được file mẫu." };
+    }
+  }
+
+  function openImportPicker() {
+    if (importing) return;
+    importSummary = null;
+    importInput?.click();
+  }
+
+  async function onImportFile(event: Event) {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) return;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+
+    importing = true;
+    importSummary = null;
+    try {
+      const { readImportRowsFromXlsx } = await import("./content-import-xlsx");
+      const rows = await readImportRowsFromXlsx(await file.arrayBuffer());
+      const response = await fetch("/api/admin/contents/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rows })
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401) return loseAccess();
+      if (!response.ok || !payload?.success) {
+        notice = {
+          tone: "error",
+          text:
+            typeof payload?.error === "string"
+              ? payload.error
+              : "Không nhập được file."
+        };
+        return;
+      }
+
+      importSummary = {
+        created: Number(payload.created) || 0,
+        failed: Number(payload.failed) || 0,
+        results: Array.isArray(payload.results) ? payload.results : []
+      };
+
+      notice = {
+        tone: "ok",
+        text:
+          `Đã tạo ${importSummary.created} bản nháp` +
+          (importSummary.failed
+            ? `, ${importSummary.failed} dòng lỗi.`
+            : ".")
+      };
+
+      if (importSummary.created > 0) {
+        statusFilter = "draft";
+        reviewOnly = false;
+        resetPages();
+        await loadList();
+      }
+    } catch (error) {
+      notice = {
+        tone: "error",
+        text:
+          error instanceof Error ? error.message : "Không nhập được file."
+      };
+    } finally {
+      importing = false;
+    }
+  }
+
   function startNew() {
     if (editor?.open && !confirmDiscard()) return;
 
@@ -958,6 +1088,8 @@
                 : form.imageUrl.trim()
                   ? "image"
                   : "text",
+            // Video dung poster mac dinh cua player — khong luu anh xem truoc.
+            posterUrl: form.format === "video" ? "" : form.posterUrl,
             imageWidth: form.imageWidth.trim() || null,
             imageHeight: form.imageHeight.trim() || null,
             pollOptions:
@@ -1209,12 +1341,28 @@
     storyUrlOpen = false;
   }
 
+  function clearVideoMedia() {
+    form.imageUrl = "";
+    form.imageAlt = "";
+    form.posterUrl = "";
+    clearMeasuredSize();
+    videoUrlOpen = false;
+  }
+
   function onStoryImageDrop(event: DragEvent) {
     event.preventDefault();
     if (mediaUploading || detailLoading || archived || saving) return;
     const file = event.dataTransfer?.files?.[0];
     if (!file || !file.type.startsWith("image/")) return;
     void uploadMediaFile(file, "image", "main");
+  }
+
+  function onVideoDrop(event: DragEvent) {
+    event.preventDefault();
+    if (mediaUploading || detailLoading || archived || saving) return;
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith("video/")) return;
+    void uploadMediaFile(file, "video", "main");
   }
 
   function setFormat(next: "text" | "video" | "poll" | "prompt" | "quote") {
@@ -1239,6 +1387,7 @@
         form.imageAlt = "";
         form.posterUrl = "";
         clearMeasuredSize();
+        videoUrlOpen = false;
       }
       form.format = "video";
       return;
@@ -1277,12 +1426,208 @@
     return topics.find((item) => item.slug === slug)?.label ?? slug;
   }
 
+  function moodLabel(slug: string): string {
+    return moods.find((item) => item.slug === slug)?.label ?? slug;
+  }
+
   function dateLabel(seconds: number): string {
     return new Intl.DateTimeFormat("vi", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric"
     }).format(new Date(seconds * 1000));
+  }
+
+  function markPublishedLocally(
+    id: string,
+    publishedAt: number | null
+  ) {
+    const prev = items.find((item) => item.id === id);
+    if (!prev) return;
+
+    if (statusFilter === "draft") {
+      items = items.filter((item) => item.id !== id);
+      total = Math.max(0, total - 1);
+    } else {
+      items = items.map((item) =>
+        item.id === id ? { ...item, status: "published" as const } : item
+      );
+    }
+
+    stats = {
+      ...stats,
+      published: stats.published + (prev.status === "draft" ? 1 : 0),
+      drafts:
+        prev.status === "draft"
+          ? Math.max(0, stats.drafts - 1)
+          : stats.drafts
+    };
+
+    if (content?.id === id) {
+      content = {
+        ...content,
+        status: "published",
+        publishedAt: publishedAt ?? content.publishedAt
+      };
+      form = toForm(content);
+      remember();
+    }
+
+    if (peekContent?.id === id) {
+      peekContent = {
+        ...peekContent,
+        status: "published",
+        publishedAt: publishedAt ?? peekContent.publishedAt
+      };
+    }
+  }
+
+  function showListNotice(tone: "ok" | "error", text: string) {
+    notice = { tone, text };
+    window.clearTimeout(noticeTimer);
+    if (tone === "ok") {
+      noticeTimer = window.setTimeout(() => {
+        if (notice?.text === text) notice = null;
+      }, 2600);
+    }
+  }
+
+  async function quickApprove(item: AdminListItem, event?: Event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (item.status !== "draft" || approvingId) return;
+
+    if (item.topics.length === 0) {
+      showListNotice(
+        "error",
+        "Bài chưa có chủ đề — mở xem nhanh hoặc sửa trước khi duyệt."
+      );
+      return;
+    }
+
+    approvingId = item.id;
+
+    try {
+      const result = await changeStatus(item.id, "published");
+      if (!result) {
+        // changeStatus da gan notice loi (chi hien trong editor) — dua ra list.
+        if (notice?.tone === "error") showListNotice("error", notice.text);
+        return;
+      }
+
+      markPublishedLocally(item.id, result.publishedAt);
+      showListNotice("ok", `Đã duyệt «${item.title}».`);
+    } finally {
+      if (approvingId === item.id) approvingId = "";
+    }
+  }
+
+  async function openPeek(item: AdminListItem, event?: Event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+
+    const ticket = ++peekTicket;
+    peekError = "";
+    peekContent = null;
+    peekLoading = true;
+    peekDialog?.showModal();
+
+    try {
+      const { response, body } = await requestJson(
+        `/api/admin/contents/${item.id}`
+      );
+
+      if (ticket !== peekTicket) return;
+      if (response.status === 401) {
+        peekDialog?.close();
+        return loseAccess();
+      }
+
+      const next = readContent(record(body)?.content);
+      if (!response.ok || !next) {
+        peekError = errorText(body, "Không tải được nội dung.");
+        return;
+      }
+
+      peekContent = next;
+    } catch {
+      if (ticket !== peekTicket) return;
+      peekError = "Không có kết nối.";
+    } finally {
+      if (ticket === peekTicket) peekLoading = false;
+    }
+  }
+
+  function closePeek() {
+    peekTicket += 1;
+    peekDialog?.close();
+    peekContent = null;
+    peekLoading = false;
+    peekError = "";
+  }
+
+  async function approveFromPeek() {
+    if (!peekContent || peekContent.status !== "draft" || approvingId) {
+      return;
+    }
+
+    if (peekContent.topics.length === 0) {
+      peekError = "Bài chưa có chủ đề — hãy sửa trước khi duyệt.";
+      return;
+    }
+
+    if (
+      peekContent.format === "quote" &&
+      !peekContent.sourceLabel.trim()
+    ) {
+      peekError = "Câu nói cần có nguồn/tác giả — hãy sửa trước khi duyệt.";
+      return;
+    }
+
+    const id = peekContent.id;
+    const title = peekContent.title;
+    approvingId = id;
+    peekError = "";
+    try {
+      const result = await changeStatus(id, "published");
+      if (!result) {
+        peekError =
+          notice?.tone === "error"
+            ? notice.text
+            : "Không duyệt được bài.";
+        return;
+      }
+      markPublishedLocally(id, result.publishedAt);
+      showListNotice("ok", `Đã duyệt «${title}».`);
+      closePeek();
+    } finally {
+      if (approvingId === id) approvingId = "";
+    }
+  }
+
+  function editFromPeek() {
+    const current = peekContent;
+    if (!current) return;
+    const listed = items.find((item) => item.id === current.id);
+    closePeek();
+    void openItem(
+      listed ?? {
+        id: current.id,
+        title: current.title,
+        description: current.description,
+        category: current.category,
+        format: current.format,
+        kind: current.kind,
+        theme: current.theme,
+        status: current.status,
+        topics: current.topics,
+        reviewReasons: [],
+        likeCount: 0,
+        saveCount: 0,
+        createdAt: current.updatedAt,
+        updatedAt: current.updatedAt
+      }
+    );
   }
 
   function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -1309,6 +1654,10 @@
   onDestroy(() => {
     clearTimeout(searchTimer);
     clearTimeout(sizeProbeTimer);
+    if (typeof window !== "undefined") {
+      window.clearTimeout(noticeTimer);
+      window.clearTimeout(copyTimer);
+    }
     if (typeof window === "undefined") return;
     window.removeEventListener("beforeunload", onBeforeUnload);
   });
@@ -1323,10 +1672,71 @@
               Mỗi bài là một thẻ. Bấm mũi tên để mở và sửa. Danh sách tải từng trang.
             </p>
           </div>
-          <button class="add-btn" type="button" onclick={startNew}>
-            + Thêm nội dung
-          </button>
+          <div class="page-actions">
+            <button
+              class="ghost-btn"
+              type="button"
+              onclick={() => void downloadImportTemplate()}
+            >
+              Tải mẫu Excel
+            </button>
+            <button
+              class="ghost-btn"
+              type="button"
+              disabled={importing}
+              onclick={openImportPicker}
+            >
+              {importing ? "Đang nhập…" : "Nhập Excel"}
+            </button>
+            <button class="add-btn" type="button" onclick={startNew}>
+              + Thêm nội dung
+            </button>
+            <input
+              bind:this={importInput}
+              class="visually-hidden"
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onchange={(event) => void onImportFile(event)}
+            />
+          </div>
         </header>
+
+        {#if notice}
+          <p
+            class="notice list-notice"
+            class:error={notice.tone === "error"}
+            class:ok={notice.tone === "ok"}
+            role={notice.tone === "error" ? "alert" : "status"}
+          >
+            {notice.text}
+          </p>
+        {/if}
+
+        {#if importSummary}
+          <div class="import-report" role="status">
+            <p>
+              Kết quả nhập: <strong>{importSummary.created}</strong> bản nháp,
+              <strong>{importSummary.failed}</strong> lỗi.
+            </p>
+            {#if importSummary.failed > 0}
+              <ul>
+                {#each importSummary.results.filter((item) => !item.ok) as item (item.row)}
+                  <li>
+                    Dòng {item.row}{item.title ? ` · ${item.title}` : ""}:
+                    {item.error ?? "Lỗi"}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            <button
+              type="button"
+              class="ghost-btn"
+              onclick={() => (importSummary = null)}
+            >
+              Đóng
+            </button>
+          </div>
+        {/if}
 
         <section class="stats" aria-label="Thống kê nội dung">
           <button type="button" class="stat" onclick={() => chooseTab("all")}>
@@ -1458,9 +1868,22 @@
               <li>
                 <div class="content-top">
                   <span class="kind">{formatLabels[item.format]}</span>
-                  <span class="status status-{item.status}">
-                    {statusLabels[item.status]}
-                  </span>
+                  <div class="content-top-end">
+                    <span class="status status-{item.status}">
+                      {statusLabels[item.status]}
+                    </span>
+                    {#if item.status === "draft"}
+                      <button
+                        type="button"
+                        class="peek-card peek-card-top"
+                        aria-label={`Xem nhanh ${item.title}`}
+                        title="Xem nhanh thông tin bài"
+                        onclick={(event) => void openPeek(item, event)}
+                      >
+                        Xem nhanh
+                      </button>
+                    {/if}
+                  </div>
                 </div>
                 <h2>{item.title}</h2>
                 {#if item.description}
@@ -1510,6 +1933,44 @@
                       {item.saveCount}
                     </span>
                   </span>
+                  {#if item.status === "draft"}
+                    <button
+                      type="button"
+                      class="peek-card peek-card-tools"
+                      aria-label={`Xem nhanh ${item.title}`}
+                      title="Xem nhanh thông tin bài"
+                      onclick={(event) => void openPeek(item, event)}
+                    >
+                      Xem nhanh
+                    </button>
+                    <button
+                      type="button"
+                      class="approve-card"
+                      aria-label={`Duyệt ${item.title}`}
+                      title="Duyệt và xuất bản ngay"
+                      disabled={approvingId === item.id}
+                      onclick={(event) => void quickApprove(item, event)}
+                    >
+                      <span class="approve-label">
+                        {approvingId === item.id ? "Đang duyệt…" : "Duyệt"}
+                      </span>
+                      <svg
+                        class="approve-icon"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="2.25"
+                        stroke="currentColor"
+                        aria-hidden="true"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="m4.5 12.75 6 6 9-13.5"
+                        />
+                      </svg>
+                    </button>
+                  {/if}
                   {#if item.status === "published"}
                     <a
                       class="view-card"
@@ -1890,65 +2351,123 @@
                 </div>
               </div>
             {:else if form.format === "video"}
-              <label>
-                URL / đường dẫn video
+              <div class="media-pane">
+                <p class="field-label">Video</p>
+                <button
+                  type="button"
+                  class="media-drop"
+                  class:has-image={!!form.imageUrl.trim()}
+                  class:is-busy={mediaUploading}
+                  disabled={mediaUploading || detailLoading || archived || saving}
+                  onclick={() => videoFileInput?.click()}
+                  ondragover={(event) => event.preventDefault()}
+                  ondrop={onVideoDrop}
+                >
+                  {#if form.imageUrl.trim()}
+                    <video
+                      class="media-drop-video"
+                      src={form.imageUrl.trim()}
+                      muted
+                      playsinline
+                      preload="metadata"
+                      aria-label={form.imageAlt || form.title || "Video"}
+                    ></video>
+                    <span class="media-drop-badge">
+                      {mediaUploading ? "Đang tải…" : "Đổi video"}
+                    </span>
+                  {:else}
+                    <span class="media-drop-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <strong>
+                      {mediaUploading ? "Đang tải lên…" : "Kéo thả hoặc chọn video"}
+                    </strong>
+                    <span>MP4, WebM · tối đa 16 MB · HTTPS hoặc kho media</span>
+                  {/if}
+                </button>
                 <input
-                  maxlength="500"
-                  placeholder="https://… hoặc /api/media/…"
-                  value={form.imageUrl}
-                  oninput={(event) => {
-                    const target = event.currentTarget;
-                    if (!(target instanceof HTMLInputElement)) return;
-                    form.imageUrl = target.value;
-                    scheduleProbeMediaUrl(target.value, "video");
-                  }}
-                />
-              </label>
-              <label class="file-pick">
-                Hoặc tải video lên
-                <input
+                  bind:this={videoFileInput}
                   type="file"
                   accept="video/mp4,video/webm"
+                  hidden
                   disabled={mediaUploading || detailLoading || archived || saving}
                   onchange={(event) => onMediaPicked(event, "video", "main")}
                 />
-              </label>
-              <label>
-                Mô tả video
-                <input maxlength="200" bind:value={form.imageAlt} />
-              </label>
-              <label>
-                Ảnh xem trước (tuỳ chọn)
-                <input
-                  maxlength="500"
-                  placeholder="https://… hoặc /api/media/…"
-                  bind:value={form.posterUrl}
-                />
-              </label>
-              <label class="file-pick">
-                Hoặc tải ảnh xem trước
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  disabled={mediaUploading || detailLoading || archived || saving}
-                  onchange={(event) =>
-                    onMediaPicked(event, "image", "poster")}
-                />
-              </label>
-              {#if measuredHint}
-                <p class="hint">{measuredHint}</p>
-              {:else if mediaMeasuring}
-                <p class="hint">Đang đo tỉ lệ media…</p>
-              {:else}
+
+                {#if form.imageUrl.trim()}
+                  <div class="media-toolbar">
+                    <button
+                      type="button"
+                      class="chip"
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      onclick={() => videoFileInput?.click()}
+                    >
+                      Đổi video
+                    </button>
+                    <button
+                      type="button"
+                      class="chip"
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      onclick={clearVideoMedia}
+                    >
+                      Gỡ video
+                    </button>
+                    {#if measuredHint}
+                      <span class="media-meta">{measuredHint}</span>
+                    {:else if mediaMeasuring}
+                      <span class="media-meta">Đang đo tỉ lệ…</span>
+                    {/if}
+                  </div>
+                  <label>
+                    Mô tả video
+                    <input
+                      maxlength="200"
+                      placeholder="Mô tả ngắn cho video"
+                      bind:value={form.imageAlt}
+                    />
+                  </label>
+                {/if}
+
+                <div class="media-url">
+                  <button
+                    type="button"
+                    class="media-url-toggle"
+                    aria-expanded={videoUrlOpen}
+                    onclick={() => (videoUrlOpen = !videoUrlOpen)}
+                  >
+                    {videoUrlOpen ? "Ẩn dán URL" : "Hoặc dán URL video"}
+                  </button>
+                  {#if videoUrlOpen}
+                    <input
+                      maxlength="500"
+                      placeholder="https://… hoặc /api/media/…"
+                      value={form.imageUrl}
+                      disabled={mediaUploading || detailLoading || archived || saving}
+                      oninput={(event) => {
+                        const target = event.currentTarget;
+                        if (!(target instanceof HTMLInputElement)) return;
+                        form.imageUrl = target.value;
+                        form.posterUrl = "";
+                        scheduleProbeMediaUrl(target.value, "video");
+                      }}
+                    />
+                  {/if}
+                </div>
+
                 <p class="hint">
-                  Tỉ lệ khung được đo tự động khi tải tệp hoặc dán URL.
+                  {mediaUploading
+                    ? "Đang tải lên kho media…"
+                    : "Ảnh xem trước lấy mặc định từ player. Video chỉ tải khi người đọc bấm phát."}
                 </p>
-              {/if}
-              <p class="hint">
-                {mediaUploading
-                  ? "Đang tải lên kho media…"
-                  : "Video chỉ tải khi bấm phát. HTTPS hoặc R2 (tối đa 16 MB)."}
-              </p>
+              </div>
             {/if}
             {#if form.format === "poll"}
               <p class="field-label">Đáp án (2–4)</p>
@@ -2132,6 +2651,168 @@
     </dialog>
 
     <dialog
+      class="peek-dialog"
+      bind:this={peekDialog}
+      aria-labelledby="peek-title"
+      oncancel={(event) => {
+        if (approvingId) {
+          event.preventDefault();
+          return;
+        }
+        peekTicket += 1;
+        peekContent = null;
+        peekLoading = false;
+        peekError = "";
+      }}
+    >
+      <div class="peek-panel">
+        <header class="peek-head">
+          <div>
+            <p class="peek-kicker">Xem nhanh</p>
+            <h2 id="peek-title">
+              {peekContent?.title ?? (peekLoading ? "Đang tải…" : "Nội dung")}
+            </h2>
+          </div>
+          <button
+            type="button"
+            class="text-button"
+            disabled={Boolean(approvingId)}
+            onclick={closePeek}
+          >
+            Đóng
+          </button>
+        </header>
+
+        {#if peekLoading}
+          <p class="peek-muted">Đang tải thông tin bài…</p>
+        {:else if peekError}
+          <p class="notice error" role="alert">{peekError}</p>
+        {:else if peekContent}
+          <dl class="peek-facts">
+            <div>
+              <dt>Định dạng</dt>
+              <dd>{formatLabels[peekContent.format]}</dd>
+            </div>
+            <div>
+              <dt>Trạng thái</dt>
+              <dd>
+                <span class="status status-{peekContent.status}">
+                  {statusLabels[peekContent.status]}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>Chủ đề</dt>
+              <dd>
+                {#if peekContent.topics.length === 0}
+                  <span class="topic-badge is-missing">Chưa có</span>
+                {:else}
+                  <span class="topic-badges">
+                    {#each peekContent.topics as topic (topic)}
+                      <span class="topic-badge">{topicLabel(topic)}</span>
+                    {/each}
+                  </span>
+                {/if}
+              </dd>
+            </div>
+            <div>
+              <dt>Tâm trạng</dt>
+              <dd>
+                {#if peekContent.moods.length === 0}
+                  <span class="peek-muted">Không có</span>
+                {:else}
+                  <span class="topic-badges">
+                    {#each peekContent.moods as mood (mood)}
+                      <span class="topic-badge">{moodLabel(mood)}</span>
+                    {/each}
+                  </span>
+                {/if}
+              </dd>
+            </div>
+            {#if peekContent.sourceLabel}
+              <div>
+                <dt>Nguồn</dt>
+                <dd>{peekContent.sourceLabel}</dd>
+              </div>
+            {/if}
+            {#if peekContent.sourceUrl}
+              <div>
+                <dt>Link nguồn</dt>
+                <dd class="peek-url">{peekContent.sourceUrl}</dd>
+              </div>
+            {/if}
+            <div>
+              <dt>Cập nhật</dt>
+              <dd>{dateLabel(peekContent.updatedAt)}</dd>
+            </div>
+          </dl>
+
+          {#if peekContent.description}
+            <section class="peek-block">
+              <h3>Mô tả</h3>
+              <p>{peekContent.description}</p>
+            </section>
+          {/if}
+
+          {#if peekContent.body}
+            <section class="peek-block">
+              <h3>Nội dung dài</h3>
+              <p class="peek-body">{peekContent.body}</p>
+            </section>
+          {/if}
+
+          {#if peekContent.format === "poll" && peekContent.pollOptions.length > 0}
+            <section class="peek-block">
+              <h3>Đáp án</h3>
+              <ul class="peek-poll">
+                {#each peekContent.pollOptions as option, index (index)}
+                  <li>{option}</li>
+                {/each}
+              </ul>
+            </section>
+          {/if}
+        {/if}
+
+        {#if peekContent}
+          <footer class="peek-actions">
+            <button
+              type="button"
+              class="peek-edit"
+              disabled={Boolean(approvingId)}
+              onclick={editFromPeek}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="1.5"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+                />
+              </svg>
+              Sửa
+            </button>
+            {#if peekContent.status === "draft"}
+              <button
+                type="button"
+                class="peek-approve"
+                disabled={approvingId === peekContent.id}
+                onclick={() => void approveFromPeek()}
+              >
+                {approvingId === peekContent.id ? "Đang duyệt…" : "Duyệt"}
+              </button>
+            {/if}
+          </footer>
+        {/if}
+      </div>
+    </dialog>
+
+    <dialog
       class="delete-confirm"
       bind:this={deleteDialog}
       aria-labelledby="delete-title"
@@ -2231,18 +2912,69 @@
     flex: 1 1 auto;
   }
 
-  .add-btn {
+  .page-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .add-btn,
+  .ghost-btn {
     flex: 0 0 auto;
     min-height: 36px;
     padding: 0 var(--space-4);
-    border: 0;
     border-radius: var(--radius-full);
-    background: var(--color-primary);
-    color: var(--color-surface);
     font: inherit;
     font-size: var(--text-sm);
     font-weight: 650;
     cursor: pointer;
+  }
+
+  .add-btn {
+    border: 0;
+    background: var(--color-primary);
+    color: var(--color-surface);
+  }
+
+  .ghost-btn {
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-secondary);
+  }
+
+  .ghost-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .import-report {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+
+  .import-report p {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+
+  .import-report ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--color-error);
+    font-size: var(--text-xs);
+  }
+
+  .import-report .ghost-btn {
+    justify-self: start;
+    min-height: 2rem;
+    padding-inline: 0.85rem;
   }
 
   .page-head p {
@@ -2399,6 +3131,19 @@
     color: var(--color-text);
   }
 
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  select:focus,
+  select:focus-visible {
+    outline: none;
+    outline-offset: 0;
+    box-shadow: none;
+    border: 1px solid
+      color-mix(in oklab, var(--color-primary) 55%, var(--color-border));
+  }
+
   /* Loc: mui ten dropdown dich vao trong, khong sat mep phai. */
   .toolbar select {
     appearance: none;
@@ -2484,6 +3229,20 @@
     gap: var(--space-2) var(--space-3);
   }
 
+  .content-top-end {
+    display: inline-flex;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .peek-card-top {
+    display: none;
+  }
+
   .content-tools {
     grid-area: tools;
     justify-self: end;
@@ -2531,6 +3290,58 @@
     cursor: pointer;
   }
 
+  .list-notice {
+    margin: 0;
+  }
+
+  .peek-card,
+  .approve-card {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 0.2rem 0.7rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: var(--text-xs);
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .peek-card:hover,
+  .peek-card:focus-visible {
+    border-color: color-mix(in oklab, var(--color-primary) 45%, var(--color-border));
+    color: var(--color-primary);
+  }
+
+  .approve-card {
+    border-color: color-mix(in oklab, var(--color-success) 40%, var(--color-border));
+    background: color-mix(in oklab, var(--color-success) 12%, var(--color-surface));
+    color: var(--color-success);
+  }
+
+  .approve-card:hover,
+  .approve-card:focus-visible {
+    background: color-mix(in oklab, var(--color-success) 22%, var(--color-surface));
+  }
+
+  .approve-icon {
+    display: none;
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+
+  .peek-card:disabled,
+  .approve-card:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
   .open-card svg,
   .delete-card svg,
   .view-card svg,
@@ -2567,6 +3378,193 @@
   .delete-card:hover,
   .delete-card:focus-visible {
     color: #c45b5b;
+  }
+
+  .peek-dialog {
+    width: min(100% - 1.5rem, 34rem);
+    max-height: min(88vh, 40rem);
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 1.1rem;
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: 0 18px 48px color-mix(in oklab, #000 28%, transparent);
+  }
+
+  .peek-dialog::backdrop {
+    background: color-mix(in oklab, #000 42%, transparent);
+  }
+
+  .peek-panel {
+    display: grid;
+    gap: var(--space-4);
+    max-height: min(88vh, 40rem);
+    padding: var(--space-5);
+    overflow: auto;
+  }
+
+  .peek-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .peek-kicker {
+    margin: 0 0 0.25rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .peek-head h2 {
+    margin: 0;
+    font-family: var(--font-editorial);
+    font-size: clamp(1.2rem, 2.4vw, 1.45rem);
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .peek-muted {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .peek-facts {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+  }
+
+  .peek-facts > div {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    gap: 0.5rem 0.75rem;
+    align-items: start;
+  }
+
+  .peek-facts dt {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 650;
+  }
+
+  .peek-facts dd {
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .peek-url {
+    color: var(--color-text-secondary);
+    word-break: break-all;
+  }
+
+  .peek-block {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .peek-block h3 {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .peek-block p,
+  .peek-body {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+
+  .peek-body {
+    max-height: 12rem;
+    overflow: auto;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    background: var(--color-surface-soft);
+  }
+
+  .peek-poll {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .peek-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    padding-top: var(--space-2);
+  }
+
+  .peek-edit,
+  .peek-approve {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-height: 2.35rem;
+    padding: 0 1.05rem;
+    border-radius: var(--radius-full);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .peek-edit {
+    border: 1px solid color-mix(in oklab, var(--color-border) 70%, var(--color-text));
+    background: color-mix(in oklab, var(--color-surface-soft) 88%, transparent);
+    color: var(--color-text);
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .peek-edit svg {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+  }
+
+  .peek-edit:hover,
+  .peek-edit:focus-visible {
+    border-color: color-mix(in oklab, var(--color-primary) 55%, var(--color-border));
+    background: color-mix(in oklab, var(--color-primary) 14%, var(--color-surface));
+    color: var(--color-primary);
+  }
+
+  .peek-approve {
+    border: 0;
+    background: color-mix(in oklab, var(--color-success) 88%, #000);
+    color: #fff;
+  }
+
+  .peek-approve:hover,
+  .peek-approve:focus-visible {
+    background: color-mix(in oklab, var(--color-success) 78%, #000);
+  }
+
+  .peek-edit:disabled,
+  .peek-approve:disabled {
+    opacity: 0.55;
+    cursor: wait;
   }
 
   .delete-confirm {
@@ -2961,11 +3959,17 @@
     border-color: var(--color-border);
   }
 
-  .media-drop img {
+  .media-drop img,
+  .media-drop-video {
     display: block;
     width: 100%;
     height: 200px;
     object-fit: cover;
+    background: #0b1210;
+  }
+
+  .media-drop-video {
+    pointer-events: none;
   }
 
   .media-drop-icon {
@@ -3068,8 +4072,18 @@
       max-width: 40rem;
     }
 
-    .add-btn {
-      justify-self: stretch;
+    .page-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      width: 100%;
+    }
+
+    .page-actions .add-btn {
+      grid-column: 1 / -1;
+    }
+
+    .add-btn,
+    .ghost-btn {
       min-height: 2.75rem;
       width: 100%;
     }
@@ -3325,10 +4339,53 @@
     .content-tools {
       width: 100%;
       justify-content: flex-end;
-      gap: 0.1rem;
+      gap: 0.35rem;
       margin-top: 0.15rem;
       padding-top: 0.45rem;
       border-top: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
+    }
+
+    .peek-card {
+      min-height: 2rem;
+      padding: 0.25rem 0.65rem;
+    }
+
+    .peek-card-top {
+      display: inline-flex;
+    }
+
+    .peek-card-tools {
+      display: none;
+    }
+
+    .content-top-end .peek-card {
+      min-height: 1.55rem;
+      padding: 0.12rem 0.55rem;
+      font-size: 0.7rem;
+    }
+
+    .content-tools .approve-card {
+      width: 2rem;
+      height: 2rem;
+      min-height: 2rem;
+      padding: 0;
+      border: 0;
+      border-radius: var(--radius-full);
+      background: transparent;
+      color: var(--color-success);
+    }
+
+    .content-tools .approve-card:hover,
+    .content-tools .approve-card:focus-visible {
+      background: color-mix(in oklab, var(--color-success) 16%, transparent);
+    }
+
+    .content-tools .approve-label {
+      display: none;
+    }
+
+    .content-tools .approve-icon {
+      display: block;
     }
 
     .content-tools .engage {

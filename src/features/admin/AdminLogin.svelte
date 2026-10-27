@@ -327,10 +327,13 @@
     color: var(--color-primary);
   }
 
-  input:focus {
+  input:focus,
+  input:focus-visible {
     outline: none;
-    border-color: color-mix(in oklab, var(--color-primary) 55%, var(--color-border));
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 18%, transparent);
+    outline-offset: 0;
+    border: 1px solid
+      color-mix(in oklab, var(--color-primary) 55%, var(--color-border));
+    box-shadow: none;
   }
 
   .primary {

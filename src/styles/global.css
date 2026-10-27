@@ -57,6 +57,25 @@ p {
   outline-offset: 4px;
 }
 
+/* Form controls: chi 1px border khi focus — khong outline/ring day. */
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none;
+  outline-offset: 0;
+  box-shadow: none;
+  border-width: 1px;
+  border-style: solid;
+  border-color: color-mix(
+    in oklab,
+    var(--color-primary) 55%,
+    var(--color-border, currentColor)
+  );
+}
+
 ::selection {
   background: var(--color-theme-peace);
   color: var(--color-text);

@@ -677,9 +677,13 @@
     font-size: 0.95rem;
   }
 
-  .field input:focus {
-    outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
-    outline-offset: 1px;
+  .field input:focus,
+  .field input:focus-visible {
+    outline: none;
+    outline-offset: 0;
+    border: 1px solid
+      color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+    box-shadow: none;
   }
 
   .switch {

@@ -1969,11 +1969,16 @@
   }
 
   input:focus,
+  input:focus-visible,
   textarea:focus,
-  select:focus {
+  textarea:focus-visible,
+  select:focus,
+  select:focus-visible {
     outline: none;
-    border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
+    outline-offset: 0;
+    border: 1px solid
+      color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+    box-shadow: none;
   }
 
   textarea {
@@ -1992,8 +1997,9 @@
   }
 
   .slug-row:focus-within {
-    border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
+    border: 1px solid
+      color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+    box-shadow: none;
   }
 
   .slug-prefix {
