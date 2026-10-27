@@ -762,18 +762,27 @@
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--color-surface);
+    background: color-mix(in oklab, var(--color-surface-soft) 55%, transparent);
     color: var(--color-text-secondary);
     font: inherit;
     font-size: 0.92rem;
     font-weight: 600;
     cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
   }
 
   .chip[aria-pressed="true"] {
-    border-color: transparent;
-    background: var(--color-theme-peace);
-    color: var(--color-accent-peace);
+    border-color: color-mix(in oklab, var(--color-primary) 55%, var(--color-border));
+    background: color-mix(
+      in oklab,
+      var(--color-primary) 28%,
+      var(--color-surface)
+    );
+    color: var(--color-text);
+    font-weight: 700;
   }
 
   .chip:disabled {
